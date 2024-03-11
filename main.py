@@ -6,7 +6,6 @@ import urllib.request
 import tuna
 
 import threading, queue
-import ctypes
 import zipfile
 import requests
 from pathlib import Path
@@ -15,6 +14,8 @@ import sys, json, os, time, logging, random, shutil, tempfile, subprocess, re, p
 import base64
 import numpy as np
 import cv2
+#---- helper ----#
+import MessageAnnouncer from utils.message_announcer 
 import utils.helper as helper
 sys.path.append(".")
 
@@ -46,6 +47,7 @@ else:
 
 print("BACKEND : " + BACKEND)
 print("DEVICE : " + DEVICE)
+
 PROJECT_PATH = "./projects" if BACKEND == "COLAB" else "./projects"
 PROJECT_FILENAME = "project.json"
 PROJECT_ZIP = "project.zip"
@@ -54,9 +56,8 @@ TEMP_FOLDER = "temp"
 
 STAGE = 0 #0 none, 1 = prepare dataset, 2 = training, 3 = trained, 4 = converting, 5 converted
 
-report_queue = queue.Queue()
+reporter = MessageAnnouncer()
 train_task = None
-report_task = None
 
 #==================================== Server Configuration ====================================#
 app = Flask(__name__)
@@ -67,6 +68,28 @@ logging.getLogger('werkzeug').setLevel(logging.WARNING)
 @app.route('/')
 def index():
     return "Hello World"
+
+def format_sse(data: str, event=None) -> str:
+    """Formats a string and an event name in order to follow the event stream convention.
+
+    >>> format_sse(data=json.dumps({'abc': 123}), event='Jackson 5')
+    'event: Jackson 5\\ndata: {"abc": 123}\\n\\n'
+
+    """
+    msg = f'data: {data}\n\n'
+    if event is not None:
+        msg = f'event: {event}\n{msg}'
+    return msg
+
+@app.route('/listen', methods=['GET'])
+def listen():
+    def stream():
+        messages = reporter.listen()  # returns a queue.Queue
+        while True:
+            msg = messages.get()  # blocks until a new message arrives
+            yield msg
+
+    return flask.Response(stream(), mimetype='text/event-stream')
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -81,31 +104,17 @@ def upload():
 
 @app.route("/train", methods=["POST"])
 def start_training():
-    global train_task, report_queue
+    global train_task, reporter
     print("start training process")
     data = request.get_json()
     project_id = data["project"]
-    train_task = threading.Thread(target=training_task, args=(project_id,report_queue,))
+    train_task = threading.Thread(target=training_task, args=(project_id,reporter,))
     train_task.start()
     return jsonify({"result" : "OK"})
 
 @app.route('/ping', methods=["GET","POST"])
 def on_ping():
     return jsonify({"result":"pong"})
-
-@app.route('/backend', methods=["GET"])
-def on_backend():
-    if request.method == 'GET':
-        with open("/proc/device-tree/model", "r") as f:
-            model = f.read().strip()
-        if "Jetson Nano" in model:
-            return jsonify({"result":"OK",  "data" : "JETSON" })
-        elif "Raspberry Pi" in model:
-            return jsonify({"result":"OK",  "data" : "RPI" })
-        elif "Nano" in model:
-            return jsonify({"result":"OK",  "data" : "NANO" })
-        else:
-            return jsonify({"result":"OK",  "data" : "NONE" })
 
 @app.after_request
 def after_request(response):
@@ -151,13 +160,13 @@ def training_task(project_id, q):
 
 @app.route("/terminate_training", methods=["POST"])
 def terminate_training():
-    global train_task, report_task, report_queue
+    global train_task, reporter
     print("terminate current training process")
     if train_task and train_task.is_alive():
         kill_thread(train_task)
         print("send kill command")
     #if report_task and report_task.is_alive():
-    #    report_queue.put({"time": time.time(), "event" : "terminate", "msg":"Training terminated"})
+    #    reporter.announce({"time": time.time(), "event" : "terminate", "msg":"Training terminated"})
     time.sleep(3)
     return jsonify({"result" : "OK"})
 
