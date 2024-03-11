@@ -1,3 +1,5 @@
+import queue
+
 class MessageAnnouncer:
 
     def __init__(self):
