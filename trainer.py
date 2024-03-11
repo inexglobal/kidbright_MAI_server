@@ -70,28 +70,31 @@ def parse_args():
                             default=10, help='interval between evaluations')
     parser.add_argument('--cuda', action='store_true',
                         help='use cuda.')
-    parser.add_argument('--tfboard', action='store_true', default=False,
-                        help='use tensorboard')
-    parser.add_argument('--debug', action='store_true', default=False,
-                        help='debug mode where only one image is trained')
     parser.add_argument('--save_folder', default='weights/', type=str, 
                         help='Gamma update for SGD')
 
     return parser.parse_args()
 
-def train(args):        
-    path_to_save = os.path.join(args.save_folder, args.dataset, args.version)
-    os.makedirs(path_to_save, exist_ok=True)
+def train(project, path_to_save, 
+        high_resolution=True, 
+        multi_scale=True, 
+        cuda=True, 
+        learning_rate=1e-4, 
+        batch_size=32, 
+        start_epoch=0, 
+        epoch=100,
+        train_split=80, 
+        model='slim_yolo_v2', 
+        model_weight=None,
+        validate_matrix='val_acc',
+        save_method='best',
+        step_lr=(150, 200),
+    ):
 
-    # use hi-res backbone
-    if args.high_resolution:
-        print('use hi-res backbone')
-        hr = True
-    else:
-        hr = False
+    os.makedirs(path_to_save, exist_ok=True)
     
     # cuda
-    if args.cuda:
+    if cuda:
         print('use cuda')
         cudnn.benchmark = True
         device = torch.device("cuda")
@@ -100,7 +103,7 @@ def train(args):
         print("use cpu")
 
     # multi-scale
-    if args.multi_scale:
+    if multi_scale:
         print('use the multi-scale trick ...')
         train_size = [640, 640]
         val_size = [416, 416]
@@ -155,21 +158,21 @@ def train(args):
         from models.yolo_v2 import myYOLOv2
         anchor_size = ANCHOR_SIZE if args.dataset == 'voc' else ANCHOR_SIZE_COCO
     
-        yolo_net = myYOLOv2(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=hr)
+        yolo_net = myYOLOv2(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=high_resolution)
         print('Let us train yolo_v2 on the %s dataset ......' % (args.dataset))
 
     elif args.version == 'yolo_v3':
         from models.yolo_v3 import myYOLOv3
         anchor_size = MULTI_ANCHOR_SIZE if args.dataset == 'voc' else MULTI_ANCHOR_SIZE_COCO
         
-        yolo_net = myYOLOv3(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=hr)
+        yolo_net = myYOLOv3(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=high_resolution)
         print('Let us train yolo_v3 on the %s dataset ......' % (args.dataset))
 
     elif args.version == 'yolo_v3_spp':
         from models.yolo_v3_spp import myYOLOv3Spp
         anchor_size = MULTI_ANCHOR_SIZE if args.dataset == 'voc' else MULTI_ANCHOR_SIZE_COCO
         
-        yolo_net = myYOLOv3Spp(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=hr)
+        yolo_net = myYOLOv3Spp(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=high_resolution)
         print('Let us train yolo_v3_spp on the %s dataset ......' % (args.dataset))
 
     elif args.version == 'slim_yolo_v2':
@@ -179,7 +182,7 @@ def train(args):
         from models.slim_yolo_v2 import SlimYOLOv2
         anchor_size = ANCHOR_SIZE if args.dataset == 'voc' else (ANCHOR_SIZE_COCO if args.dataset == "coco" else ANCHOR_SIZE_WIDER_FACE)
     
-        yolo_net = SlimYOLOv2(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=hr)
+        yolo_net = SlimYOLOv2(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=high_resolution)
         print('Let us train slim_yolo_v2 on the %s dataset ......' % (args.dataset))
         # yolo_net = MyDataParallel(yolo_net, device_ids=[0, 1])
         # yolo_net = yolo_net.cuda()
@@ -193,7 +196,7 @@ def train(args):
         from models.tiny_yolo_v3 import YOLOv3tiny
         anchor_size = TINY_MULTI_ANCHOR_SIZE if args.dataset == 'voc' else TINY_MULTI_ANCHOR_SIZE_COCO
     
-        yolo_net = YOLOv3tiny(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=hr)
+        yolo_net = YOLOv3tiny(device, input_size=train_size, num_classes=num_classes, trainable=True, anchor_size=anchor_size, hr=high_resolution)
         print('Let us train tiny_yolo_v3 on the %s dataset ......' % (args.dataset))
 
     else:
@@ -202,16 +205,6 @@ def train(args):
 
     model = yolo_net
     model.to(device).train()
-
-    # use tfboard
-    if args.tfboard:
-        print('use tensorboard')
-        from torch.utils.tensorboard import SummaryWriter
-        c_time = time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))
-        log_path = os.path.join('log/coco/', args.version, c_time)
-        os.makedirs(log_path, exist_ok=True)
-
-        writer = SummaryWriter(log_path)
     
     # keep training
     if args.resume is not None:
@@ -226,13 +219,13 @@ def train(args):
                             momentum=args.momentum,
                             weight_decay=args.weight_decay
                             )
-    max_epoch = cfg['max_epoch']
+    max_epoch = epoch
     epoch_size = len(dataset) // args.batch_size
 
     # start training loop
     t0 = time.time()
 
-    for epoch in range(args.start_epoch, max_epoch):
+    for epoch in range(start_epoch, max_epoch):
         print(datetime.now())
         print('Training at epoch %d/%d' % (epoch + 1, max_epoch))
         # use cos lr
@@ -268,12 +261,12 @@ def train(args):
             images = images.to(device)
 
             # multi-scale trick
-            if iter_i % 10 == 0 and iter_i > 0 and args.multi_scale:
+            if iter_i % 10 == 0 and iter_i > 0 and multi_scale:
                 # randomly choose a new size
                 size = random.randint(10, 19) * 32
                 train_size = [size, size]
                 model.set_grid(train_size)
-            if args.multi_scale:
+            if multi_scale:
                 # interpolate
                 images = torch.nn.functional.interpolate(images, size=train_size, mode='bilinear', align_corners=False)
             
@@ -303,11 +296,6 @@ def train(args):
 
             # display
             if iter_i % 10 == 0:
-                if args.tfboard:
-                    # viz loss
-                    writer.add_scalar('object loss', conf_loss.item(), iter_i + epoch * epoch_size)
-                    writer.add_scalar('class loss', cls_loss.item(), iter_i + epoch * epoch_size)
-                    writer.add_scalar('local loss', txtytwth_loss.item(), iter_i + epoch * epoch_size)
                 
                 t1 = time.time()
                 print('[Epoch %d/%d][Iter %d/%d][lr %.6f]'

@@ -24,7 +24,8 @@ def write_text_file(file,data):
 
 def read_json_file(file):
     if os.path.exists(file):
-        with open(file) as f:
+        # read as utf-8
+        with open(file , 'r', encoding='utf-8') as f:
             return json.load(f)
 
 def sync_files(path,needed_files, remove_exist=True):

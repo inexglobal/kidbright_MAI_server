@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from flask import *
 from fileinput import filename
 
@@ -15,10 +16,11 @@ import base64
 import numpy as np
 import cv2
 #---- helper ----#
-import MessageAnnouncer from utils.message_announcer 
+from utils.message_announcer import MessageAnnouncer
 import utils.helper as helper
 sys.path.append(".")
-
+#---- train ----#
+from train import train
 
 app = Flask(__name__)
 
@@ -69,18 +71,6 @@ logging.getLogger('werkzeug').setLevel(logging.WARNING)
 def index():
     return "Hello World"
 
-def format_sse(data: str, event=None) -> str:
-    """Formats a string and an event name in order to follow the event stream convention.
-
-    >>> format_sse(data=json.dumps({'abc': 123}), event='Jackson 5')
-    'event: Jackson 5\\ndata: {"abc": 123}\\n\\n'
-
-    """
-    msg = f'data: {data}\n\n'
-    if event is not None:
-        msg = f'event: {event}\n{msg}'
-    return msg
-
 @app.route('/listen', methods=['GET'])
 def listen():
     def stream():
@@ -89,7 +79,7 @@ def listen():
             msg = messages.get()  # blocks until a new message arrives
             yield msg
 
-    return flask.Response(stream(), mimetype='text/event-stream')
+    return Response(stream(), mimetype='text/event-stream')
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -133,8 +123,12 @@ def training_task(project_id, q):
     try:
         # 1 ========== prepare project ========= #
         STAGE = 1
-        q.put({"time":time.time(), "event": "initial", "msg" : "Start training step 1 ... prepare dataset"})
-        # unzip project
+        # for i in range(50):
+        #     q.announce({"time":time.time(), "event": "initial", "msg" : "Start training step 1 ... prepare dataset"})
+        #     time.sleep(1)
+        q.announce({"time":time.time(), "event": "initial", "msg" : "Start training step 1 ... prepare dataset"})
+        
+        # unzip project        
         project_zip = os.path.join(PROJECT_PATH, project_id, PROJECT_ZIP)
         project_folder = os.path.join(PROJECT_PATH, project_id)
         with zipfile.ZipFile(project_zip, 'r') as zip_ref:
@@ -142,15 +136,25 @@ def training_task(project_id, q):
         os.remove(project_zip)
         # read project file
         project = helper.read_json_file(os.path.join(PROJECT_PATH, project_id, PROJECT_FILENAME))        
-        q.put({"time":time.time(), "event": "initial", "msg" : "target project id : "+project_id})
+        q.announce({"time":time.time(), "event": "initial", "msg" : "target project id : "+project_id})
         # 2 ========== prepare dataset ========= #
         STAGE = 2
         # execute script "!python train.py -d custom --cuda -v slim_yolo_v2 -hr -ms"
-        q.put({"time":time.time(), "event": "initial", "msg" : "Start training step 2 ... training"})
+        q.announce({"time":time.time(), "event": "initial", "msg" : "Start training step 2 ... training"})
         cmd = "python train.py -d custom --cuda -v slim_yolo_v2 -hr -ms"
         
-        #subprocess.run(cmd, cwd="./", shell=True)
-        subprocess.run(cmd, shell=True)
+        # #subprocess.run(cmd, cwd="./", shell=True)
+        # subprocess.run(cmd, shell=True)
+        
+        train({
+            "project": project_id,
+            "dataset": "kbai",
+            "batch_size": 4,
+            "epochs": 10,
+            "lr": 0.001,
+            
+        })
+        
         # 3 ========== training ========= #
         
     finally:
