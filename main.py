@@ -1,7 +1,6 @@
 from flask import *
 from fileinput import filename
 
-import gdown
 import urllib.request
 
 import tuna
