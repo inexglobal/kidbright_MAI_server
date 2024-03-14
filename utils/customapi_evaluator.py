@@ -37,27 +37,30 @@ class CustomAPIEvaluator():
         self.annopath = os.path.join(data_root, 'Annotations', '%s.xml')
         self.imgpath = os.path.join(data_root, 'JPEGImages', '%s.jpg')
         self.imgsetpath = os.path.join(data_root, 'ImageSets', 'Main', set_type+'.txt')
-        self.output_dir = self.get_output_dir('custom_eval/', self.set_type)
 
         # dataset
         self.dataset = CustomDetection(root=data_root, 
-                                    image_sets=[set_type],
-                                    transform=transform
+                                        labels=labelmap,
+                                        image_sets=[set_type],
+                                        transform=transform
                                     )
+        self.num_images = len(self.dataset)
+        print("------ create dataset evaluator : ", self.num_images, " images")
+        print("class labels: ", labelmap)
 
     def evaluate(self, net):
-    
+        print('--- Evaluating detections ---')
+        # set eval mode
         net.eval()
         num_images = len(self.dataset)
         # all detections are collected into:
         #    all_boxes[cls][image] = N x 5 array of detections in
         #    (x1, y1, x2, y2, score)
-        self.all_boxes = [[[] for _ in range(num_images)]
+        self.all_boxes = [[[] for _ in range(self.num_images)]
                         for _ in range(len(self.labelmap))]
 
-        # timers
-        det_file = os.path.join(self.output_dir, 'detections.pkl')
-        for i in range(num_images):
+        # for i in range(self.num_images):
+        for i, index in enumerate(self.dataset.ids):
             im, gt, h, w = self.dataset.pull_item(i)
 
             x = Variable(im.unsqueeze(0)).to(self.device)
@@ -67,10 +70,12 @@ class CustomAPIEvaluator():
             detect_time = time.time() - t0
             scale = np.array([[w, h, w, h]])
             bboxes *= scale
-
+            #print('class inds:', cls_inds.shape)
+            
             for j in range(len(self.labelmap)):
                 inds = np.where(cls_inds == j)[0]
                 if len(inds) == 0:
+                    print('No detections for class:', self.labelmap[j])
                     self.all_boxes[j][i] = np.empty([0, 5], dtype=np.float32)
                     continue
                 c_bboxes = bboxes[inds]
@@ -82,96 +87,52 @@ class CustomAPIEvaluator():
 
             if i % 500 == 0:
                 print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1, num_images, detect_time))
+        
+        # process all boxes        
+        target_index = [ [] for _ in range(len(self.labelmap))]
+        target_score = [ [] for _ in range(len(self.labelmap))]
+        target_bbox = [ [] for _ in range(len(self.labelmap))]
 
-        with open(det_file, 'wb') as f:
-            pickle.dump(self.all_boxes, f, pickle.HIGHEST_PROTOCOL)
-
-        print('Evaluating detections')
-        self.evaluate_detections(self.all_boxes)
-
-        print('Mean AP: ', self.map)
-  
-
-    def parse_rec(self, filename):
-        """ Parse a PASCAL VOC xml file """
-        tree = ET.parse(filename)
-        objects = []
-        for obj in tree.findall('object'):
-            obj_struct = {}
-            obj_struct['name'] = obj.find('name').text
-            obj_struct['pose'] = obj.find('pose').text
-            obj_struct['truncated'] = int(obj.find('truncated').text)
-            obj_struct['difficult'] = int(obj.find('difficult').text)
-            bbox = obj.find('bndbox')
-            obj_struct['bbox'] = [int(bbox.find('xmin').text),
-                                int(bbox.find('ymin').text),
-                                int(bbox.find('xmax').text),
-                                int(bbox.find('ymax').text)]
-            objects.append(obj_struct)
-
-        return objects
-
-
-    def get_output_dir(self, name, phase):
-        """Return the directory where experimental artifacts are placed.
-        If the directory does not exist, it is created.
-        A canonical path is built using the name from an imdb and a network
-        (if not None).
-        """
-        filedir = os.path.join(name, phase)
-        if not os.path.exists(filedir):
-            os.makedirs(filedir)
-        return filedir
-
-
-    def get_voc_results_file_template(self, cls):
-        # VOCdevkit/VOC2007/results/det_test_aeroplane.txt
-        filename = 'det_' + self.set_type + '_%s.txt' % (cls)
-        filedir = os.path.join(self.devkit_path, 'results')
-        if not os.path.exists(filedir):
-            os.makedirs(filedir)
-        path = os.path.join(filedir, filename)
-        return path
-
-
-    def write_voc_results_file(self, all_boxes):
         for cls_ind, cls in enumerate(self.labelmap):
-            if self.display:
-                print('Writing {:s} custom results file'.format(cls))
-            filename = self.get_voc_results_file_template(cls)
-            with open(filename, 'wt') as f:
-                for im_ind, index in enumerate(self.dataset.ids):
-                    dets = all_boxes[cls_ind][im_ind]
-                    if dets == []:
-                        continue
-                    # the VOCdevkit expects 1-based indices
-                    for k in range(dets.shape[0]):
-                        f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
-                                format(index[1], dets[k, -1],
-                                    dets[k, 0] + 1, dets[k, 1] + 1,
-                                    dets[k, 2] + 1, dets[k, 3] + 1))
+            for im_ind, index in enumerate(self.dataset.ids):
+                dets = self.all_boxes[cls_ind][im_ind]
+                if len(dets) == 0:
+                    continue
+                # the VOCdevkit expects 1-based indices
+                for k in range(dets.shape[0]):
+                    target_index[cls_ind].append(index[1])
+                    target_score[cls_ind].append(dets[k, -1])
+                    target_bbox[cls_ind].append([dets[k, -1], dets[k, 0] + 1, dets[k, 1] + 1, dets[k, 2] + 1, dets[k, 3] + 1])
 
-
-    def do_python_eval(self, use_07=True):
+        # convert to numpy array
+        for i in range(len(self.labelmap)):
+            target_index[i] = np.array(target_index[i])
+            target_score[i] = np.array(target_score[i])
+            target_bbox[i] = np.array(target_bbox[i])          
+        
+        self.all_boxes = [target_index, target_score, target_bbox]
+        
+        self.do_eval(self.all_boxes)
+        print('--- Evaluating detections finished ---')
+    
+    def do_eval(self, boxes, use_07=True):
         cachedir = os.path.join(self.devkit_path, 'annotations_cache')
         aps = []
         # The PASCAL VOC metric changed in 2010
         use_07_metric = use_07
         print('Custom metric? ' + ('Yes' if use_07_metric else 'No'))
-        if not os.path.isdir(self.output_dir):
-            os.mkdir(self.output_dir)
-        for i, cls in enumerate(self.labelmap):
-            filename = self.get_voc_results_file_template(cls)
-            rec, prec, ap = self.voc_eval(detpath=filename, 
-                                          classname=cls, 
-                                          cachedir=cachedir, 
-                                          ovthresh=0.5, 
-                                          use_07_metric=use_07_metric
+
+        for i, cls in enumerate(self.labelmap):            
+            rec, prec, ap = self.voc_eval(boxes,
+                                            classname=cls, 
+                                            classid=i,
+                                            cachedir=cachedir, 
+                                            ovthresh=0.5, 
+                                            use_07_metric=use_07_metric
                                         )
             aps += [ap]
             print('AP for {} = {:.4f}'.format(cls, ap))
-            with open(os.path.join(self.output_dir, cls + '_pr.pkl'), 'wb') as f:
-                pickle.dump({'rec': rec, 'prec': prec, 'ap': ap}, f)
+
         if self.display:
             self.map = np.mean(aps)
             print('Mean AP = {:.4f}'.format(np.mean(aps)))
@@ -191,48 +152,17 @@ class CustomAPIEvaluator():
             print('Mean AP = {:.4f}'.format(np.mean(aps)))
 
 
-    def voc_ap(self, rec, prec, use_07_metric=True):
-        """ ap = voc_ap(rec, prec, [use_07_metric])
-        Compute VOC AP given precision and recall.
-        If use_07_metric is true, uses the
-        VOC 07 11 point method (default:True).
-        """
-        if use_07_metric:
-            # 11 point metric
-            ap = 0.
-            for t in np.arange(0., 1.1, 0.1):
-                if np.sum(rec >= t) == 0:
-                    p = 0
-                else:
-                    p = np.max(prec[rec >= t])
-                ap = ap + p / 11.
-        else:
-            # correct AP calculation
-            # first append sentinel values at the end
-            mrec = np.concatenate(([0.], rec, [1.]))
-            mpre = np.concatenate(([0.], prec, [0.]))
-
-            # compute the precision envelope
-            for i in range(mpre.size - 1, 0, -1):
-                mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
-
-            # to calculate area under PR curve, look for points
-            # where X axis (recall) changes value
-            i = np.where(mrec[1:] != mrec[:-1])[0]
-
-            # and sum (\Delta recall) * prec
-            ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
-        return ap
-
-
-    def voc_eval(self, detpath, classname, cachedir, ovthresh=0.5, use_07_metric=True):
+    def voc_eval(self, all_bboxs, classname, classid, cachedir , ovthresh=0.5, use_07_metric=True):
         if not os.path.isdir(cachedir):
             os.mkdir(cachedir)
         cachefile = os.path.join(cachedir, 'annots.pkl')
+        
         # read list of images
         with open(self.imgsetpath, 'r') as f:
             lines = f.readlines()
         imagenames = [x.strip() for x in lines]
+        
+        # load annots
         if not os.path.isfile(cachefile):
             # load annots
             recs = {}
@@ -257,24 +187,20 @@ class CustomAPIEvaluator():
         for imagename in imagenames:
             R = [obj for obj in recs[imagename] if obj['name'] == classname]
             bbox = np.array([x['bbox'] for x in R])
-            difficult = np.array([x['difficult'] for x in R]).astype(np.bool)
+            difficult = np.array([x['difficult'] for x in R]).astype(np.bool_)
             det = [False] * len(R)
             npos = npos + sum(~difficult)
             class_recs[imagename] = {'bbox': bbox,
                                     'difficult': difficult,
                                     'det': det}
 
-        # read dets
-        detfile = detpath.format(classname)
-        with open(detfile, 'r') as f:
-            lines = f.readlines()
-        if any(lines) == 1:
+        # read dets        
+        if len(all_bboxs[0][classid]) != 0:
 
-            splitlines = [x.strip().split(' ') for x in lines]
-            image_ids = [x[0] for x in splitlines]
-            confidence = np.array([float(x[1]) for x in splitlines])
-            BB = np.array([[float(z) for z in x[2:]] for x in splitlines])
-
+            image_ids = all_bboxs[0][classid]
+            confidence = all_bboxs[1][classid]
+            BB = all_bboxs[2][classid] # np.array([[float(z) for z in x[:4]] for x in splitlines])
+            # print('BB:', BB.shape, 'confidence:', confidence.shape, 'image_ids:', len(image_ids))
             # sort by confidence
             sorted_ind = np.argsort(-confidence)
             sorted_scores = np.sort(-confidence)
@@ -332,10 +258,60 @@ class CustomAPIEvaluator():
 
         return rec, prec, ap
 
+    
 
-    def evaluate_detections(self, box_list):
-        self.write_voc_results_file(box_list)
-        self.do_python_eval()
+    def parse_rec(self, filename):
+        """ Parse a PASCAL VOC xml file """
+        tree = ET.parse(filename)
+        objects = []
+        for obj in tree.findall('object'):
+            obj_struct = {}
+            obj_struct['name'] = obj.find('name').text
+            obj_struct['pose'] = obj.find('pose').text
+            obj_struct['truncated'] = int(obj.find('truncated').text)
+            obj_struct['difficult'] = int(obj.find('difficult').text)
+            bbox = obj.find('bndbox')
+            obj_struct['bbox'] = [int(bbox.find('xmin').text),
+                                int(bbox.find('ymin').text),
+                                int(bbox.find('xmax').text),
+                                int(bbox.find('ymax').text)]
+            objects.append(obj_struct)
+
+        return objects
+
+
+    def voc_ap(self, rec, prec, use_07_metric=True):
+        """ ap = voc_ap(rec, prec, [use_07_metric])
+        Compute VOC AP given precision and recall.
+        If use_07_metric is true, uses the
+        VOC 07 11 point method (default:True).
+        """
+        if use_07_metric:
+            # 11 point metric
+            ap = 0.
+            for t in np.arange(0., 1.1, 0.1):
+                if np.sum(rec >= t) == 0:
+                    p = 0
+                else:
+                    p = np.max(prec[rec >= t])
+                ap = ap + p / 11.
+        else:
+            # correct AP calculation
+            # first append sentinel values at the end
+            mrec = np.concatenate(([0.], rec, [1.]))
+            mpre = np.concatenate(([0.], prec, [0.]))
+
+            # compute the precision envelope
+            for i in range(mpre.size - 1, 0, -1):
+                mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+
+            # to calculate area under PR curve, look for points
+            # where X axis (recall) changes value
+            i = np.where(mrec[1:] != mrec[:-1])[0]
+
+            # and sum (\Delta recall) * prec
+            ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+        return ap
 
 
 if __name__ == '__main__':

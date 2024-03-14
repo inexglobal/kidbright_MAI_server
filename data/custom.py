@@ -16,14 +16,6 @@ if sys.version_info[0] == 2:
 else:
     import xml.etree.ElementTree as ET
 
-path_to_dir = osp.dirname(osp.abspath(__file__))
-CUSTOM_ROOT = path_to_dir + "/custom"
-
-CUSTOM_CLASSES = [
-    "mouse",
-    "sipeed_logo"
-]
-
 
 class CustomAnnotationTransform(object):
     """Transforms a VOC annotation into a Tensor of bbox coords and label index
@@ -39,8 +31,7 @@ class CustomAnnotationTransform(object):
     """
 
     def __init__(self, class_to_ind=None, keep_difficult=False):
-        self.class_to_ind = class_to_ind or dict(
-            zip(CUSTOM_CLASSES, range(len(CUSTOM_CLASSES))))
+        self.class_to_ind = class_to_ind
         self.keep_difficult = keep_difficult
 
     def __call__(self, target, width, height):
@@ -71,7 +62,7 @@ class CustomAnnotationTransform(object):
             bndbox.append(label_idx)
             res += [bndbox]  # [xmin, ymin, xmax, ymax, label_ind]
             # img_id = target.find('filename').text[:-4]
-
+        #print('res:', res)
         return res  # [[xmin, ymin, xmax, ymax, label_ind], ... ]
 
 
@@ -93,13 +84,14 @@ class CustomDetection(data.Dataset):
     """
 
     def __init__(self, root,
-                 image_sets=['train'],
-                 transform=None, target_transform=CustomAnnotationTransform(),
-                 ):
+                labels,
+                image_sets=['train'],                 
+                transform=None,
+        ):
         self.root = root
         self.image_set = image_sets
         self.transform = transform
-        self.target_transform = target_transform
+        self.target_transform = CustomAnnotationTransform(class_to_ind=dict(zip(labels, range(len(labels)))))
         self._annopath = osp.join('%s', 'Annotations', '%s.xml')
         self._imgpath = osp.join('%s', 'JPEGImages', '%s.jpg')
         self.name = image_sets

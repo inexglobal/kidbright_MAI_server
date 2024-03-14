@@ -146,17 +146,19 @@ def training_task(project_id, q):
         dataset_path = os.path.join(project_folder, "datasets")
         #{'validateMatrix': 'validation-accuracy', 'saveMethod': 'Best value after n epoch', 'modelType': 'Resnet18', 'weights': 'resnet18', 'inputWidth': 320, 'inputHeight': 240, 'train_split': 80, 'epochs': 100, 'batch_size': 32, 'learning_rate': 0.001}
         # check if project has trainConfig and it valid        
-        model_label = [] # <<<<<<<<<<<<<<<<<<<<
-        train_object_detection(project, output_path, project_folder,
+
+        # label format in json lables : [ {label: "label1"}, {label: "label2"}]
+        model_label = [l["label"] for l in project["labels"]]
+        train_object_detection(project, output_path, project_folder,q,
             high_resolution=True, 
             multi_scale=True, 
-            cuda=True, 
+            cuda=False, 
             learning_rate=project["trainConfig"]["learning_rate"], 
             batch_size=project["trainConfig"]["batch_size"],
             start_epoch=0, 
             epoch=project["trainConfig"]["epochs"],
             train_split=project["trainConfig"]["train_split"],
-            model=project["trainConfig"]["modelType"],
+            model_type=project["trainConfig"]["modelType"],
             model_weight=None,
             validate_matrix=project["trainConfig"]["validateMatrix"],
             save_method=project["trainConfig"]["saveMethod"],

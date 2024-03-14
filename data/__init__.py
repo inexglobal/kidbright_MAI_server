@@ -1,4 +1,4 @@
-from .custom import CustomDetection, CustomAnnotationTransform, CUSTOM_CLASSES, CUSTOM_ROOT
+from .custom import CustomDetection, CustomAnnotationTransform
 from .config import *
 import torch
 import cv2

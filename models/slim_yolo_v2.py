@@ -150,7 +150,7 @@ class SlimYOLOv2(nn.Module):
         cls_inds = cls_inds[keep]
 
         # NMS
-        keep = np.zeros(len(bbox_pred), dtype=np.int)
+        keep = np.zeros(len(bbox_pred), dtype=np.int64)
         for i in range(self.num_classes):
             inds = np.where(cls_inds == i)[0]
             if len(inds) == 0:
@@ -187,7 +187,7 @@ class SlimYOLOv2(nn.Module):
             return prediction
 
         B, abC, H, W = prediction.size()
-
+   
         # import numpy as np
         # a = prediction.detach().numpy()
         # print(a.shape, np.max(a), np.min(a))

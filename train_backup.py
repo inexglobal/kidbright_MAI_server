@@ -17,7 +17,7 @@ import tools
 
 from utils.augmentations import SSDAugmentation
 from utils.customapi_evaluator import CustomAPIEvaluator
-
+from utils.map_evaluator import MAPEvaluator
 
 # cards_id = [0, 1, 2, 3]
 # use_horovod = True
@@ -25,9 +25,7 @@ from utils.customapi_evaluator import CustomAPIEvaluator
 cards_id = [0]
 use_horovod = False
 
-
 os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(f"{id}" for id in cards_id)
-
 
 class MyDataParallel(torch.nn.DataParallel):
     pass
@@ -54,6 +52,8 @@ def parse_args():
                         help='yes or no to choose using warmup strategy to train')
     parser.add_argument('--wp_epoch', type=int, default=6,
                         help='The upper bound of warm-up')
+    parser.add_argument('-e', '--epoch', type=int, default=10,
+                        help='max epoch to train')                    
     parser.add_argument('--start_epoch', type=int, default=0,
                         help='start epoch to train')
     parser.add_argument('-r', '--resume', default=None, type=str, 
@@ -113,21 +113,21 @@ def train(args):
     print("Setting Arguments.. : ", args)
     print("----------------------------------------------------------")
     print('Loading the dataset...')
-
+    CUSTOM_CLASSES = ['mouse','sipeed_logo']
     if args.dataset == 'custom':
-
-        data_dir = CUSTOM_ROOT
+        # current dir data/custom/
+        data_dir = os.path.join( os.path.dirname(os.path.abspath(__file__)), 'data', "custom")
         num_classes = len(CUSTOM_CLASSES)
         dataset = CustomDetection(root=data_dir, 
+                                labels=CUSTOM_CLASSES,
                                 transform=SSDAugmentation(train_size, mean=(0.5, 0.5, 0.5), std=(128/255.0, 128/255.0, 128/255.0))
                                 )
-
-        evaluator = CustomAPIEvaluator(data_root=data_dir,
+        
+        evaluator = MAPEvaluator(data_root=data_dir,
                                     img_size=val_size,
                                     device=device,
                                     transform=BaseTransform(val_size),
-                                    labelmap=CUSTOM_CLASSES,
-                                    use_horovod=use_horovod
+                                    labelmap=CUSTOM_CLASSES
                                     )
     elif args.dataset == 'kbai':
         pass
@@ -226,14 +226,13 @@ def train(args):
                             momentum=args.momentum,
                             weight_decay=args.weight_decay
                             )
-    max_epoch = cfg['max_epoch']
+    max_epoch = args.epoch
     epoch_size = len(dataset) // args.batch_size
 
     # start training loop
     t0 = time.time()
 
-    for epoch in range(args.start_epoch, max_epoch):
-        print(datetime.now())
+    for epoch in range(args.start_epoch, max_epoch):        
         print('Training at epoch %d/%d' % (epoch + 1, max_epoch))
         # use cos lr
         if args.cos and epoch > 20 and epoch <= max_epoch - 20:
@@ -253,6 +252,7 @@ def train(args):
     
 
         for iter_i, (images, targets) in enumerate(dataloader):
+            
             # WarmUp strategy for learning rate
             if not args.no_warm_up:
                 if epoch < args.wp_epoch:
@@ -277,8 +277,10 @@ def train(args):
                 # interpolate
                 images = torch.nn.functional.interpolate(images, size=train_size, mode='bilinear', align_corners=False)
             
+                 
             # make labels
-            targets = [label.tolist() for label in targets]
+            targets = [label.tolist() for label in targets]     
+
             if args.version == 'yolo_v2' or args.version == 'slim_yolo_v2':
                 targets = tools.gt_creator(input_size=train_size, 
                                            stride=yolo_net.stride, 

@@ -20,11 +20,8 @@ from utils.customapi_evaluator import CustomAPIEvaluator
 
 
 # cards_id = [0, 1, 2, 3]
-# use_horovod = True
 
 cards_id = [0]
-use_horovod = False
-
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(f"{id}" for id in cards_id)
 
@@ -32,7 +29,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(f"{id}" for id in cards_id)
 class MyDataParallel(torch.nn.DataParallel):
     pass
 
-def train_object_detection(project, path_to_save, project_dir,
+def train_object_detection(project, path_to_save, project_dir,q,
         high_resolution=True, 
         multi_scale=True, 
         cuda=True, 
@@ -41,7 +38,7 @@ def train_object_detection(project, path_to_save, project_dir,
         start_epoch=0, 
         epoch=100,
         train_split=80, 
-        model='slim_yolo_v2', 
+        model_type='slim_yolo_v2', 
         model_weight=None,
         validate_matrix='val_acc',
         save_method='best',
@@ -76,23 +73,31 @@ def train_object_detection(project, path_to_save, project_dir,
     # dataset and evaluator
     print("----------------------------------------------------------")
     print('Loading the dataset...')
+    q.announce({"time":time.time(), "event": "dataset_loading", "msg" : "Loading the dataset..."})
 
-
-    data_dir = os.path.join(project_dir, "datasets")
+    data_dir = os.path.join(project_dir, "dataset")
     num_classes = len(labels)
+
+    print('Project label:', labels)
+    q.announce({"time":time.time(), "event": "dataset_loading", "msg" : "Project label: " + str(labels)})
+    print('The number of classes:', num_classes)
+    q.announce({"time":time.time(), "event": "dataset_loading", "msg" : "The number of classes: " + str(num_classes)})
+    
+
     dataset = CustomDetection(root=data_dir, 
+                            labels=labels,
                             transform=SSDAugmentation(train_size, mean=(0.5, 0.5, 0.5), std=(128/255.0, 128/255.0, 128/255.0))
-                            )
+    )
 
     evaluator = CustomAPIEvaluator(data_root=data_dir,
                                     img_size=val_size,
                                     device=device,
                                     transform=BaseTransform(val_size),
-                                    labelmap=labels,
-                                    use_horovod=use_horovod
+                                    labelmap=labels
                                 )
 
     print('The dataset size:', len(dataset))
+    q.announce({"time":time.time(), "event": "dataset_loading", "msg" : "The dataset size: " + str(len(dataset))})
     print("----------------------------------------------------------")
 
     # dataloader
@@ -102,11 +107,11 @@ def train_object_detection(project, path_to_save, project_dir,
                     batch_size=batch_size, 
                     shuffle=True, 
                     collate_fn=detection_collate,
-                    num_workers=16,
+                    num_workers=8,
                     pin_memory=True
                 )
 
-    if model == 'slim_yolo_v2':
+    if model_type == 'slim_yolo_v2':
         from models.slim_yolo_v2 import SlimYOLOv2
         # TODO: generate anchor size <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -139,12 +144,20 @@ def train_object_detection(project, path_to_save, project_dir,
     best_map = 0.0
     # start training loop
     t0 = time.time()
+    epoch_train_loss = 0.0
+
+    q.announce({"time":time.time(), "event": "train_start", "msg" : "Start training ..."})
 
     for epoch in range(start_epoch, max_epoch):
-        print(datetime.now())
         print('Training at epoch %d/%d' % (epoch + 1, max_epoch))
         # use step lr
-        
+        q.announce({
+            "time":time.time(), 
+            "event": "epoch_start", 
+            "msg" : "Start epoch " + str(epoch + 1) + "/" + str(max_epoch) + " ... training", 
+            "epoch": epoch + 1, 
+            "max_epoch": max_epoch
+        })
         if epoch in step_lr:
             tmp_lr = tmp_lr * 0.1
             set_lr(optimizer, tmp_lr)
@@ -152,7 +165,13 @@ def train_object_detection(project, path_to_save, project_dir,
 
         for iter_i, (images, targets) in enumerate(dataloader):
             # WarmUp strategy for learning rate
-            
+            q.announce({
+                "time":time.time(), 
+                "event": "batch_start", 
+                "msg" : "Start batch " + str(iter_i) + "/" + str(epoch_size) + " ... training",
+                "batch": iter_i,
+                "max_batch": epoch_size
+            })
             if epoch < warm_up_epoch:
                 tmp_lr = base_lr * pow((iter_i+epoch*epoch_size)*1. / (warm_up_epoch*epoch_size), 4)
                 # tmp_lr = 1e-6 + (base_lr-1e-6) * (iter_i+epoch*epoch_size) / (epoch_size * (args.wp_epoch))
@@ -175,9 +194,11 @@ def train_object_detection(project, path_to_save, project_dir,
                 # interpolate
                 images = torch.nn.functional.interpolate(images, size=train_size, mode='bilinear', align_corners=False)
             
+            
             # make labels
-            targets = [label.tolist() for label in targets]
-            if model == 'slim_yolo_v2':
+            targets = [label.tolist() for label in targets] 
+            
+            if model_type == 'slim_yolo_v2':
                 targets = tools.gt_creator(input_size=train_size, 
                                                 stride=yolo_net.stride, 
                                                 label_lists=targets, 
@@ -185,10 +206,9 @@ def train_object_detection(project, path_to_save, project_dir,
                                            )
 
             targets = torch.tensor(targets).float().to(device)
-
             # forward and loss
             conf_loss, cls_loss, txtytwth_loss, total_loss = model(images, target=targets)
-
+            epoch_train_loss += total_loss.item()
             # backprop
             total_loss.backward()
             optimizer.step()
@@ -205,13 +225,24 @@ def train_object_detection(project, path_to_save, project_dir,
 
                 t0 = time.time()
 
+            q.announce({
+                "time":time.time(), 
+                "event": "batch_end", 
+                "msg" : "End batch " + str(iter_i) + "/" + str(epoch_size) + " ... training",
+                "batch": iter_i,
+                "max_batch": epoch_size,
+                "matrix": {
+                    "train_loss": total_loss.item()
+                }
+            })
         # evaluation
-        if save_method == 'best':
-            eval_epoch = 1
-        elif save_method == 'best_one_of_third':
-            eval_epoch = 10 if epoch < max_epoch / 3 else 1
-        elif save_method == 'best_one_of_half':
-            eval_epoch = 10 if epoch < max_epoch / 2 else 1
+        eval_epoch = 1
+        # if save_method == 'best':
+        #     eval_epoch = 1
+        # elif save_method == 'best_one_of_third':
+        #     eval_epoch = 10 if epoch < max_epoch / 3 else 1
+        # elif save_method == 'best_one_of_half':
+        #     eval_epoch = 10 if epoch < max_epoch / 2 else 1
 
         if (epoch + 1) % eval_epoch == 0:
             model.trainable = False
@@ -249,7 +280,22 @@ def train_object_detection(project, path_to_save, project_dir,
             print('Saving state, epoch:', epoch + 1)
             torch.save(model.state_dict(), os.path.join(path_to_save, 'last.pth'))        
 
-    # end loop here
+        # publish the result
+        q.announce({
+            "time":time.time(), 
+            "event": "epoch_end", 
+            "msg" : "End epoch " + str(epoch + 1) + "/" + str(max_epoch) + " ... training",
+            "matrix": {
+                "train_loss": epoch_train_loss / epoch_size,
+                "val_acc": evaluator.map or 0.0,
+                "val_loss": evaluator.loss or 0.0,
+                "val_precision": evaluator.precision or 0.0,
+                "val_recall": evaluator.recall or 0.0,            
+            }
+        })
+    
+    q.announce({"time":time.time(), "event": "train_end", "msg" : "Training is done"})
+
 
 def set_lr(optimizer, lr):
     for param_group in optimizer.param_groups:
