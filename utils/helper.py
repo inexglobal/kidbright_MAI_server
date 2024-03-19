@@ -14,6 +14,11 @@ def create_not_exist(path):
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
 
+def recreate_folder(path):
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)    
+
 def write_file(file,data):
     with open(file, 'wb') as f:
         f.write(data) 

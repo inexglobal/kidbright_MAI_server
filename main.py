@@ -47,9 +47,6 @@ else:
             DEVICE = "NANO"
             BACKEND = "EDGE"
 
-print("BACKEND : " + BACKEND)
-print("DEVICE : " + DEVICE)
-
 PROJECT_PATH = "./projects" if BACKEND == "COLAB" else "./projects"
 PROJECT_FILENAME = "project.json"
 PROJECT_ZIP = "project.zip"
@@ -87,7 +84,7 @@ def upload():
         f = request.files['project']
         project_id = request.form['project_id']
         project_path = os.path.join(PROJECT_PATH, project_id)
-        helper.create_not_exist(project_path)
+        helper.recreate_folder(project_path)
         f.save(os.path.join(project_path, PROJECT_ZIP))
         
         return jsonify({'result': 'success'})
@@ -287,6 +284,8 @@ def handle_inference_model():
 
 
 if __name__ == '__main__':
+    print("BACKEND : " + BACKEND)
+    print("DEVICE : " + DEVICE)
     len_arg = len(sys.argv)
     if len_arg > 2:
         if sys.argv[1] == "tuna" and sys.argv[2]:

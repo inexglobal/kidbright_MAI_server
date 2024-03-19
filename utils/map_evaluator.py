@@ -41,7 +41,6 @@ class MAPEvaluator():
         self.annopath = os.path.join(data_root, 'Annotations', '%s.xml')
         self.imgpath = os.path.join(data_root, 'JPEGImages', '%s.jpg')
         self.imgsetpath = os.path.join(data_root, 'ImageSets', 'Main', set_type+'.txt')
-        self.output_dir = self.get_output_dir('custom_eval/', self.set_type)
 
         # dataset
         self.dataset = CustomDetection(root=data_root, 
@@ -49,15 +48,6 @@ class MAPEvaluator():
                                     image_sets=[set_type],
                                     transform=transform
                                     )
-        # if self.use_horovod:
-        #     self.sampler = torch.utils.data.distributed.DistributedSampler(
-        #                     self.dataset, num_replicas=hvd.size(), rank=hvd.rank())
-        #     self.testloader = torch.utils.data.DataLoader(self.dataset, batch_size=32,
-        #                                 #  shuffle=False,
-        #                                  num_workers=1,
-        #                                  pin_memory=True,
-        #                                  sampler = self.sampler)
-
     def evaluate(self, net):
         if not self.use_horovod or (self.use_horovod and self.hvd.rank() == 0):
             net.eval()
@@ -69,7 +59,6 @@ class MAPEvaluator():
                             for _ in range(len(self.labelmap))]
 
             # timers
-            det_file = os.path.join(self.output_dir, 'detections.pkl')
             for i in range(num_images):
                 im, gt, h, w = self.dataset.pull_item(i)
 
@@ -96,8 +85,6 @@ class MAPEvaluator():
                 if i % 500 == 0:
                     print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1, num_images, detect_time))
 
-            with open(det_file, 'wb') as f:
-                pickle.dump(self.all_boxes, f, pickle.HIGHEST_PROTOCOL)
 
             print('Evaluating detections')
             self.evaluate_detections(self.all_boxes)
@@ -121,19 +108,6 @@ class MAPEvaluator():
             objects.append(obj_struct)
 
         return objects
-
-
-    def get_output_dir(self, name, phase):
-        """Return the directory where experimental artifacts are placed.
-        If the directory does not exist, it is created.
-        A canonical path is built using the name from an imdb and a network
-        (if not None).
-        """
-        filedir = os.path.join(name, phase)
-        if not os.path.exists(filedir):
-            os.makedirs(filedir)
-        return filedir
-
 
     def get_voc_results_file_template(self, cls):
         # VOCdevkit/VOC2007/results/det_test_aeroplane.txt
@@ -168,9 +142,7 @@ class MAPEvaluator():
         aps = []
         # The PASCAL VOC metric changed in 2010
         use_07_metric = use_07
-        print('Custom metric? ' + ('Yes' if use_07_metric else 'No'))
-        if not os.path.isdir(self.output_dir):
-            os.mkdir(self.output_dir)
+        # print('Custom metric? ' + ('Yes' if use_07_metric else 'No'))
         for i, cls in enumerate(self.labelmap):
             filename = self.get_voc_results_file_template(cls)
             rec, prec, ap = self.voc_eval(detpath=filename, 
@@ -181,10 +153,11 @@ class MAPEvaluator():
                                         )
             aps += [ap]
             print('AP for {} = {:.4f}'.format(cls, ap))
-            with open(os.path.join(self.output_dir, cls + '_pr.pkl'), 'wb') as f:
-                pickle.dump({'rec': rec, 'prec': prec, 'ap': ap}, f)
+
         if self.display:
             self.map = np.mean(aps)
+            self.precision = prec
+            self.recall = rec
             print('Mean AP = {:.4f}'.format(np.mean(aps)))
             print('~~~~~~~~')
             print('Results:')
@@ -199,7 +172,9 @@ class MAPEvaluator():
             print('--------------------------------------------------------------')
         else:
             self.map = np.mean(aps)
-            print('Mean AP = {:.4f}'.format(np.mean(aps)))
+            self.precision = np.mean(prec)
+            self.recall = np.mean(rec)
+            print('Mean AP = {:.4f}'.format(self.map))
 
 
     def voc_ap(self, rec, prec, use_07_metric=True):
@@ -240,10 +215,12 @@ class MAPEvaluator():
         if not os.path.isdir(cachedir):
             os.mkdir(cachedir)
         cachefile = os.path.join(cachedir, 'annots.pkl')
+
         # read list of images
         with open(self.imgsetpath, 'r') as f:
             lines = f.readlines()
         imagenames = [x.strip() for x in lines]
+        
         if not os.path.isfile(cachefile):
             # load annots
             recs = {}
@@ -265,6 +242,9 @@ class MAPEvaluator():
         # extract gt objects for this class
         class_recs = {}
         npos = 0
+        #print('classname:', classname)
+        #print('imagenames:', imagenames)
+        #print('recs:', recs)
         for imagename in imagenames:
             R = [obj for obj in recs[imagename] if obj['name'] == classname]
             bbox = np.array([x['bbox'] for x in R])
