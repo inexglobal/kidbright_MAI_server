@@ -23,6 +23,10 @@ sys.path.append(".")
 from train_object_detection import train_object_detection
 #---- converter ----#
 from convert import torch_to_onnx, onnx_to_ncnn, gen_input
+import torch
+import torch.nn as nn
+import torch.backends.cudnn as cudnn
+from data import *
 
 app = Flask(__name__)
 
@@ -104,7 +108,7 @@ def start_training():
 
 @app.route("/download", methods=["GET"])
 def download_file():
-    global train_task, reporter
+    global convert_task, reporter
     # convert project
     project_id = request.args.get("project_id")
     if not project_id:
@@ -131,15 +135,38 @@ def send_report(path):
     return send_from_directory('projects', path)
 
 def convert_task(project_id, q):
+    global STAGE
     project_path = os.path.join(PROJECT_PATH, project_id)
     best_ap_file = os.path.join(project_path, "output", "best_map.pth")
     if not os.path.exists(best_ap_file):
         return jsonify({"result" : "FAIL", "reason":"No best_map.pth file"})
+    device = torch.device("cpu")
+
+    project = helper.read_json_file(os.path.join(project_path, PROJECT_FILENAME))
+    project_model = project["trainConfig"]["modelType"]
+    input_size = [416 , 416]
+    model_label = [l["label"] for l in project["labels"]]
+
+    if project_model == "slim_yolo_v2":
+        from models.slim_yolo_v2 import SlimYOLOv2 
+        anchor_size = ANCHOR_SIZE
+        num_classes = len(model_label)
+        detect_threshold = project["trainConfig"]["objectThreshold"]
+        iou_threshold = project["trainConfig"]["iouThreshold"]
+        net = SlimYOLOv2(device, input_size=input_size, num_classes=num_classes, conf_thresh=detect_threshold, nms_thresh=detect_threshold, anchor_size=anchor_size)
+    
+    net.load_state_dict(torch.load(best_ap_file, map_location=device))
+    net.to(device).eval()
+    print('Finished loading model!')
+    # convert to onnx and ncnn
+    from torchsummary import summary
+    summary(net.to("cpu"), input_size=(3, input_size[0], input_size[1]), device="cpu")
+    
     # convert pth to onnx
     onnx_out = os.path.join(project_path, "output", "model.onnx")
     ncnn_out_param = os.path.join(project_path, "output", "model.param")
     ncnn_out_bin = os.path.join(project_path, "output", "model.bin")
-    input_shape = (3, input_size[0], input_size[1])
+    input_shape = (3, 416, 416)
     with torch.no_grad():
         torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
         onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
