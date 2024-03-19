@@ -139,16 +139,19 @@ def convert_task(project_id, q):
     project_path = os.path.join(PROJECT_PATH, project_id)
     best_ap_file = os.path.join(project_path, "output", "best_map.pth")
     if not os.path.exists(best_ap_file):
-        return jsonify({"result" : "FAIL", "reason":"No best_map.pth file"})
+        return q.announce({"time":time.time(), "event": "error", "msg" : "No best_map.pth file"})
+    
     device = torch.device("cpu")
 
+    #load project
     project = helper.read_json_file(os.path.join(project_path, PROJECT_FILENAME))
     project_model = project["trainConfig"]["modelType"]
-    input_size = [416 , 416]
-    model_label = [l["label"] for l in project["labels"]]
 
+    input_size = [416 , 416]
+    model_label = [ l["label"] for l in project["labels"]
+    print("label:", model_label)
     if project_model == "slim_yolo_v2":
-        from models.slim_yolo_v2 import SlimYOLOv2 
+        from models.slim_yolo_v2 import SlimYOLOv2
         anchor_size = ANCHOR_SIZE
         num_classes = len(model_label)
         detect_threshold = float(project["trainConfig"]["objectThreshold"])
@@ -165,28 +168,89 @@ def convert_task(project_id, q):
 
     # convert model    
     net.no_post_process = True
-    from convert import *
-    onnx_out="out/yolov2.onnx"
-    ncnn_out_param = "out/yolov2.param"
-    ncnn_out_bin = "out/yolov2.bin"
+    onnx_out= os.path.join(project_path, "output", "model.onnx")
+    ncnn_out_param = os.path.join(project_path, "output", "model.param")
+    ncnn_out_bin = os.path.join(project_path, "output", "model.bin")
     input_shape = (3, input_size[0], input_size[1])
-    import os
-    if not os.path.exists("out"):
-        os.makedirs("out")
+    
+    os.environ['PKG_CONFIG_PATH'] = ':/root/opencv-3.4.13/lib/pkgconfig'
+    os.environ['LD_LIBRARY_PATH'] += ':/root/opencv-3.4.13/lib'
+    os.environ['PATH'] += ':/root/opencv-3.4.13/bin'
+
     with torch.no_grad():
-        torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
-        onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
-        print("convert end, ctrl-c to exit")
+      torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
+      onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
+      print("convert end, ctrl-c to exit")
     net.no_post_process = False
 
-    cmd = "tools/spnntools optimize out/yolov2.param out/yolov2.bin out/opt.param out/opt.bin"
+    output_model_optimize_bin_path = os.path.join(project_path, "output", "model_opt.bin")
+    output_model_optimize_param_path = os.path.join(project_path, "output", "model_opt.param")
+    cmd = f"tools/spnntools optimize {ncnn_out_param} {ncnn_out_bin} {output_model_optimize_param_path} {output_model_optimize_bin_path}"
     os.system(cmd)
 
-    cmd2 = "tools/spnntools calibrate -p=out/opt.param -b=out/opt.bin -i=./data/custom/test_images -o=out/opt.table --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
+    output_model_calibrate_table = os.path.join(project_path, "output", "model_opt.table")
+    imgages_path = os.path.join(project_path, "datasets", "JPEGImages")
+    cmd2 = "tools/spnntools calibrate -p= "+output_model_optimize_param_path+" -b= "+output_model_optimize_bin_path+" -i= "+imgages_path+" -o= "+output_model_calibrate_table+" --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
     os.system(cmd2)
 
-    cmd3 = "tools/spnntools quantize out/opt.param out/opt.bin out/opt_int8.param out/opt_int8.bin out/opt.table"
+    output_model_quantize_bin_path = os.path.join(project_path, "output", "model_int8.bin")
+    output_model_quantize_param_path = os.path.join(project_path, "output", "model_int8.param")
+    cmd3 = "tools/spnntools quantize "+output_model_optimize_param_path+" "+output_model_optimize_bin_path+" "+output_model_quantize_param_path+" "+output_model_quantize_bin_path+" "+output_model_calibrate_table
     os.system(cmd3)
+    
+    # project_path = os.path.join(PROJECT_PATH, project_id)
+    # best_ap_file = os.path.join(project_path, "output", "best_map.pth")
+    # if not os.path.exists(best_ap_file):
+    #     return jsonify({"result" : "FAIL", "reason":"No best_map.pth file"})
+    # device = torch.device("cpu")
+
+    # project = helper.read_json_file(os.path.join(project_path, PROJECT_FILENAME))
+    # project_model = project["trainConfig"]["modelType"]
+    # input_size = [416 , 416]
+    # model_label = [l["label"] for l in project["labels"]]
+
+    # if project_model == "slim_yolo_v2":
+    #     from models.slim_yolo_v2 import SlimYOLOv2 
+    #     anchor_size = ANCHOR_SIZE
+    #     num_classes = len(model_label)
+    #     detect_threshold = float(project["trainConfig"]["objectThreshold"])
+    #     iou_threshold = float(project["trainConfig"]["iouThreshold"])
+    #     net = SlimYOLOv2(device, input_size=input_size, num_classes=num_classes, conf_thresh=detect_threshold, nms_thresh=iou_threshold, anchor_size=anchor_size)
+    
+    # net.load_state_dict(torch.load(best_ap_file, map_location=device))
+    # net.to(device).eval()
+    # print('Finished loading model!')
+
+    # # convert to onnx and ncnn
+    # from torchsummary import summary
+    # summary(net.to("cpu"), input_size=(3, input_size[0], input_size[1]), device="cpu")
+
+    # # convert model    
+    # net.no_post_process = True
+    # from convert import *
+    # onnx_out="out/yolov2.onnx"
+    # ncnn_out_param = "out/yolov2.param"
+    # ncnn_out_bin = "out/yolov2.bin"
+    # input_shape = (3, input_size[0], input_size[1])
+    # import os
+    # if not os.path.exists("out"):
+    #     os.makedirs("out")
+    # with torch.no_grad():
+    #     torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
+    #     onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
+    #     print("convert end, ctrl-c to exit")
+    # net.no_post_process = False
+
+    # cmd = "tools/spnntools optimize out/yolov2.param out/yolov2.bin out/opt.param out/opt.bin"
+    # os.system(cmd)
+
+    # cmd2 = "tools/spnntools calibrate -p=out/opt.param -b=out/opt.bin -i=./data/custom/test_images -o=out/opt.table --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
+    # os.system(cmd2)
+
+    # cmd3 = "tools/spnntools quantize out/opt.param out/opt.bin out/opt_int8.param out/opt_int8.bin out/opt.table"
+    # os.system(cmd3)
+
+
 
 
     # convert pth to onnx
