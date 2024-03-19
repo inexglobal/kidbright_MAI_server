@@ -148,7 +148,7 @@ def convert_task(project_id, q):
     project_model = project["trainConfig"]["modelType"]
 
     input_size = [416 , 416]
-    model_label = [ l["label"] for l in project["labels"]
+    model_label = [ l["label"] for l in project["labels"]]
     print("label:", model_label)
     if project_model == "slim_yolo_v2":
         from models.slim_yolo_v2 import SlimYOLOv2
