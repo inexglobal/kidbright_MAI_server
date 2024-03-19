@@ -121,7 +121,7 @@ def train_object_detection(project, path_to_save, project_dir,q,
         print('Let us train slim_yolo_v2 on the')        
     else:
         print('Unknown model name...')
-        exit()
+        return False
 
     model = yolo_net
     model.to(device).train()
@@ -296,7 +296,8 @@ def train_object_detection(project, path_to_save, project_dir,q,
         })
     
     q.announce({"time":time.time(), "event": "train_end", "msg" : "Training is done"})
-
+    print('Training is done')
+    return True
 
 def set_lr(optimizer, lr):
     for param_group in optimizer.param_groups:

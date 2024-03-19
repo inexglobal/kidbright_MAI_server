@@ -106,21 +106,29 @@ def start_training():
     train_task.start()
     return jsonify({"result" : "OK"})
 
-@app.route("/download", methods=["GET"])
+@app.route("/convert", methods=["GET"])
 def download_file():
     global convert_task, reporter
     # convert project
     project_id = request.args.get("project_id")
     if not project_id:
         return "Fail"
-    convert_task = threading.Thread(target=convert_task, args=(project_id,reporter,))
-    convert_task.start()
+    #convert_task = threading.Thread(target=convert_model, args=(project_id,reporter,))
+    #convert_task.start()
+    convert_model(project_id, reporter)
     return jsonify({"result" : "OK"})
     
+@app.route("/download_model", methods=["GET"])
+def handle_download_model():
+    print("download model file")
+    project_id = request.args.get("project_id")
+    model_export = os.path.join(PROJECT_PATH,project_id,"model.zip")
+    return send_file(model_export, as_attachment=True)
+
 
 @app.route('/ping', methods=["GET","POST"])
 def on_ping():
-    return jsonify({"result":"pong"})
+    return jsonify({"result":"pong", "device":DEVICE, "backend":BACKEND, "stage":STAGE})
 
 @app.after_request
 def after_request(response):
@@ -134,14 +142,18 @@ def after_request(response):
 def send_report(path):
     return send_from_directory('projects', path)
 
-def convert_task(project_id, q):
+def convert_model(project_id, q):
     global STAGE
+
+    STAGE = 4
     project_path = os.path.join(PROJECT_PATH, project_id)
     best_ap_file = os.path.join(project_path, "output", "best_map.pth")
     if not os.path.exists(best_ap_file):
         return q.announce({"time":time.time(), "event": "error", "msg" : "No best_map.pth file"})
     
     device = torch.device("cpu")
+    
+    q.announce({"time":time.time(), "event": "convert_model_init", "msg" : "Start converting model"})
 
     #load project
     project = helper.read_json_file(os.path.join(project_path, PROJECT_FILENAME))
@@ -178,110 +190,33 @@ def convert_task(project_id, q):
     os.environ['PATH'] += ':/root/opencv-3.4.13/bin'
 
     with torch.no_grad():
-      torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
-      onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
-      print("convert end, ctrl-c to exit")
+        q.announce({"time":time.time(), "event": "initial", "msg" : "Start converting model to onnx"})
+        torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
+        q.announce({"time":time.time(), "event": "initial", "msg" : "Start converting onnx to ncnn"})
+        onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
+        print("convert end, ctrl-c to exit")
     net.no_post_process = False
 
     output_model_optimize_bin_path = os.path.join(project_path, "output", "model_opt.bin")
     output_model_optimize_param_path = os.path.join(project_path, "output", "model_opt.param")
+    q.announce({"time":time.time(), "event": "initial", "msg" : "Start optimizing model"})
     cmd = f"tools/spnntools optimize {ncnn_out_param} {ncnn_out_bin} {output_model_optimize_param_path} {output_model_optimize_bin_path}"
     os.system(cmd)
 
     output_model_calibrate_table = os.path.join(project_path, "output", "model_opt.table")
-    imgages_path = os.path.join(project_path, "datasets", "JPEGImages")
-    cmd2 = "tools/spnntools calibrate -p= "+output_model_optimize_param_path+" -b= "+output_model_optimize_bin_path+" -i= "+imgages_path+" -o= "+output_model_calibrate_table+" --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
+    imgages_path = os.path.join(project_path, "dataset", "JPEGImages")
+    q.announce({"time":time.time(), "event": "initial", "msg" : "Start calibrating model"})
+    cmd2 = "tools/spnntools calibrate -p="+output_model_optimize_param_path+" -b="+output_model_optimize_bin_path+" -i="+imgages_path+" -o="+output_model_calibrate_table+" --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
     os.system(cmd2)
 
     output_model_quantize_bin_path = os.path.join(project_path, "output", "model_int8.bin")
     output_model_quantize_param_path = os.path.join(project_path, "output", "model_int8.param")
+    q.announce({"time":time.time(), "event": "initial", "msg" : "Start quantizing model"})
     cmd3 = "tools/spnntools quantize "+output_model_optimize_param_path+" "+output_model_optimize_bin_path+" "+output_model_quantize_param_path+" "+output_model_quantize_bin_path+" "+output_model_calibrate_table
     os.system(cmd3)
     
-    # project_path = os.path.join(PROJECT_PATH, project_id)
-    # best_ap_file = os.path.join(project_path, "output", "best_map.pth")
-    # if not os.path.exists(best_ap_file):
-    #     return jsonify({"result" : "FAIL", "reason":"No best_map.pth file"})
-    # device = torch.device("cpu")
-
-    # project = helper.read_json_file(os.path.join(project_path, PROJECT_FILENAME))
-    # project_model = project["trainConfig"]["modelType"]
-    # input_size = [416 , 416]
-    # model_label = [l["label"] for l in project["labels"]]
-
-    # if project_model == "slim_yolo_v2":
-    #     from models.slim_yolo_v2 import SlimYOLOv2 
-    #     anchor_size = ANCHOR_SIZE
-    #     num_classes = len(model_label)
-    #     detect_threshold = float(project["trainConfig"]["objectThreshold"])
-    #     iou_threshold = float(project["trainConfig"]["iouThreshold"])
-    #     net = SlimYOLOv2(device, input_size=input_size, num_classes=num_classes, conf_thresh=detect_threshold, nms_thresh=iou_threshold, anchor_size=anchor_size)
-    
-    # net.load_state_dict(torch.load(best_ap_file, map_location=device))
-    # net.to(device).eval()
-    # print('Finished loading model!')
-
-    # # convert to onnx and ncnn
-    # from torchsummary import summary
-    # summary(net.to("cpu"), input_size=(3, input_size[0], input_size[1]), device="cpu")
-
-    # # convert model    
-    # net.no_post_process = True
-    # from convert import *
-    # onnx_out="out/yolov2.onnx"
-    # ncnn_out_param = "out/yolov2.param"
-    # ncnn_out_bin = "out/yolov2.bin"
-    # input_shape = (3, input_size[0], input_size[1])
-    # import os
-    # if not os.path.exists("out"):
-    #     os.makedirs("out")
-    # with torch.no_grad():
-    #     torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
-    #     onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
-    #     print("convert end, ctrl-c to exit")
-    # net.no_post_process = False
-
-    # cmd = "tools/spnntools optimize out/yolov2.param out/yolov2.bin out/opt.param out/opt.bin"
-    # os.system(cmd)
-
-    # cmd2 = "tools/spnntools calibrate -p=out/opt.param -b=out/opt.bin -i=./data/custom/test_images -o=out/opt.table --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
-    # os.system(cmd2)
-
-    # cmd3 = "tools/spnntools quantize out/opt.param out/opt.bin out/opt_int8.param out/opt_int8.bin out/opt.table"
-    # os.system(cmd3)
-
-
-
-
-    # convert pth to onnx
-    # onnx_out = os.path.join(project_path, "output", "model.onnx")
-    # ncnn_out_param = os.path.join(project_path, "output", "model.param")
-    # ncnn_out_bin = os.path.join(project_path, "output", "model.bin")
-    # input_shape = (3, 416, 416)
-    # with torch.no_grad():
-    #     torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
-    #     onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
-        
-    # # encode mode with spnntools
-
-    # os.environ['PKG_CONFIG_PATH'] = ':/root/opencv-3.4.13/lib/pkgconfig'
-    # os.environ['LD_LIBRARY_PATH'] += ':/root/opencv-3.4.13/lib'
-    # os.environ['PATH'] += ':/root/opencv-3.4.13/bin'
-    # output_model_optimize_bin_path = os.path.join(project_path, "output", "model_opt.bin")
-    # output_model_optimize_param_path = os.path.join(project_path, "output", "model_opt.param")
-    # cmd = f"tools/spnntools optimize {ncnn_out_param} {ncnn_out_bin} {output_model_optimize_param_path} {output_model_optimize_bin_path}"
-    # os.system(cmd)
-    # #spnntools calibrate -p=opt.param -b=opt.bin -i=/content/images -o=opt.table --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4
-    # output_model_calibrate_table = os.path.join(project_path, "output", "model_opt.table")
-    # test_images_path = os.path.join(project_path, "datasets", "JPEGImages")
-    # cmd2 = f"tools/spnntools calibrate -p={output_model_optimize_param_path} -b={output_model_optimize_bin_path} -i={test_images_path} -o={output_model_calibrate_table} --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
-    # os.system(cmd2)
-    # # quantize model
-    # # spnntools quantize opt.param opt.bin opt_int8.param opt_int8.bin opt.table
-    # output_model_quantize_bin_path = os.path.join(project_path, "output", "model_int8.bin")
-    # output_model_quantize_param_path = os.path.join(project_path, "output", "model_int8.param")
-    # cmd3 = f"tools/spnntools quantize {output_model_optimize_param_path} {output_model_optimize_bin_path} {output_model_quantize_param_path} {output_model_quantize_bin_path} {output_model_calibrate_table}"
-    # os.system(cmd3)
+    STAGE = 5
+    q.announce({"time":time.time(), "event": "convert_model_end", "msg" : "Model converted successfully"})
     
 
 def training_task(project_id, q):
@@ -313,9 +248,11 @@ def training_task(project_id, q):
         #{'validateMatrix': 'validation-accuracy', 'saveMethod': 'Best value after n epoch', 'modelType': 'Resnet18', 'weights': 'resnet18', 'inputWidth': 320, 'inputHeight': 240, 'train_split': 80, 'epochs': 100, 'batch_size': 32, 'learning_rate': 0.001}
         # check if project has trainConfig and it valid        
 
+        
+        # 3 ========== training ========= #
         # label format in json lables : [ {label: "label1"}, {label: "label2"}]
         model_label = [l["label"] for l in project["labels"]]
-        train_object_detection(project, output_path, project_folder,q,
+        res = train_object_detection(project, output_path, project_folder,q,
             high_resolution=True, 
             multi_scale=True, 
             cuda=False, 
@@ -334,8 +271,9 @@ def training_task(project_id, q):
             weight_decay=5e-4,
             warm_up_epoch=6
         )
-        
-        # 3 ========== training ========= #
+        if res:
+            STAGE = 3
+        # 4 ========== trained ========= #
         
     finally:
         print("Thread ended")
@@ -347,64 +285,9 @@ def terminate_training():
     global train_task, reporter
     print("terminate current training process")
     if train_task and train_task.is_alive():
-        kill_thread(train_task)
-        print("send kill command")
-    #if report_task and report_task.is_alive():
-    #    reporter.announce({"time": time.time(), "event" : "terminate", "msg":"Training terminated"})
-    time.sleep(3)
+        train_task.join()
     return jsonify({"result" : "OK"})
 
-@app.route("/convert_model", methods=["POST"])
-def handle_convert_model():
-    print("convert model")
-    data = request.get_json()
-    res = {}
-    project_id = data["project_id"]
-    project_backend = None
-    if "backend" in data:
-        project_backend = data["backend"]
-    if not project_id:
-        return "Fail"
-    output_path = os.path.join(PROJECT_PATH, project_id, "output")
-    files = [os.path.join(output_path,f) for f in os.listdir(output_path) if f.endswith(".h5")]
-    if len(files) <= 0:
-        return "Fail"
-    
-    project_file = os.path.join(PROJECT_PATH, project_id, PROJECT_FILENAME)
-    project = helper.read_json_file(project_file)
-    model = project["project"]["project"]["model"]
-    cmd_code = model["code"]
-    config = helper.parse_json(cmd_code)
-    raw_dataset_path = os.path.join(PROJECT_PATH, project_id, RAW_DATASET_FOLDER)
-    output_model_path = os.path.join(PROJECT_PATH, project_id, OUTPUT_FOLDER)
-    tfjs_model_path = os.path.join(output_model_path,"tfjs")
-    
-    #--- tfjs converter ---#
-    convert_res = subprocess.run(["tensorflowjs_converter --input_format keras "+files[0] + " " + tfjs_model_path], stdout=subprocess.PIPE, shell=True)
-    subprocess.run(["sed -i 's/LecunNormal/RandomNormal/g' "+tfjs_model_path+"/model.json"], shell=True)
-    subprocess.run(["sed -i 's/Functional/Model/g' "+tfjs_model_path+"/model.json"], shell=True)
-    #--- edge converter ---#
-    if project_backend == "RPI" or project_backend == "NANO":
-        converter = Converter("edgetpu", normalize, raw_dataset_path)
-        converter.convert_model(files[0])
-    elif not project_backend or project_backend == "JETSON" :
-        converter = Converter("tflite_dynamic", normalize, raw_dataset_path)
-        converter.convert_model(files[0])
-        src_name = os.path.basename(files[0]).split(".")
-        src_path = os.path.dirname(files[0])
-        src_tflite = os.path.join(src_path,src_name[0] + ".tflite")
-        des_tflite = os.path.join(src_path,src_name[0] + "_edgetpu.tflite")
-        shutil.copyfile(src_tflite, des_tflite)
-    shutil.make_archive(os.path.join(PROJECT_PATH, project_id, "model"), 'zip', output_model_path)
-
-    return jsonify({"result" : "OK"})
-
-@app.route("/download_model", methods=["GET"])
-def handle_download_model():
-    print("download model file")
-    project_id = request.args.get("project_id")
-    model_export = os.path.join(PROJECT_PATH,project_id,"model.zip")
-    return send_file(model_export, as_attachment=True)
 
 @app.route("/inference_image", methods=["POST"])
 def handle_inference_model():
