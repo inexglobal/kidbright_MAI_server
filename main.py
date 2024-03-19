@@ -21,6 +21,8 @@ import utils.helper as helper
 sys.path.append(".")
 #---- train ----#
 from train_object_detection import train_object_detection
+#---- converter ----#
+from convert import torch_to_onnx, onnx_to_ncnn, gen_input
 
 app = Flask(__name__)
 
@@ -101,6 +103,24 @@ def start_training():
     train_task = threading.Thread(target=training_task, args=(project_id,reporter,))
     train_task.start()
     return jsonify({"result" : "OK"})
+
+@app.route("/download", methods=["GET"])
+def download_file():
+    # convert project
+    project_id = request.args.get("project_id")
+    project_path = os.path.join(PROJECT_PATH, project_id)
+    best_ap_file = os.path.join(project_path, "output", "best_map.pth")
+    if not os.path.exists(best_ap_file):
+        return jsonify({"result" : "FAIL", "reason":"No best_map.pth file"})
+    # convert pth to onnx
+    onnx_out = os.path.join(project_path, "output", "yolov2.onnx")
+    ncnn_out_param = os.path.join(project_path, "output", "yolov2.param")
+    ncnn_out_bin = os.path.join(project_path, "output", "yolov2.bin")
+    input_shape = (3, input_size[0], input_size[1])
+    with torch.no_grad():
+        torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
+        onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
+        print("convert end")
 
 @app.route('/ping', methods=["GET","POST"])
 def on_ping():

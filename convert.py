@@ -18,7 +18,7 @@ def torch_to_onnx(net, input_shape, out_name="out/model.onnx", input_names=["inp
 def onnx_to_ncnn(input_shape, onnx="out/model.onnx", ncnn_param="out/conv0.param", ncnn_bin = "out/conv0.bin"):
     import os
     # onnx2ncnn tool compiled from ncnn/tools/onnx, and in the buld dir
-    cmd = f"onnx2ncnn {onnx} {ncnn_param} {ncnn_bin}"       #更换自己的路径
+    cmd = f"tools/onnx2ncnn {onnx} {ncnn_param} {ncnn_bin}"       #更换自己的路径
     os.system(cmd)
     with open(ncnn_param) as f:
         content = f.read().split("\n")

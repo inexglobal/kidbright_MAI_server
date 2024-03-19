@@ -278,7 +278,7 @@ def train_object_detection(project, path_to_save, project_dir,q,
 
         if save_method == 'last' and (epoch + 1) == max_epoch:
             print('Saving state, epoch:', epoch + 1)
-            torch.save(model.state_dict(), os.path.join(path_to_save, 'last.pth'))        
+            torch.save(model.state_dict(), os.path.join(path_to_save, 'best_map.pth'))        
 
         # publish the result
         q.announce({
