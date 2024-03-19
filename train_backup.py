@@ -113,10 +113,12 @@ def train(args):
     print("Setting Arguments.. : ", args)
     print("----------------------------------------------------------")
     print('Loading the dataset...')
-    CUSTOM_CLASSES = ['mouse','sipeed_logo']
+    #CUSTOM_CLASSES = ['mouse','sipeed_logo']
+    CUSTOM_CLASSES = ['face']
     if args.dataset == 'custom':
         # current dir data/custom/
-        data_dir = os.path.join( os.path.dirname(os.path.abspath(__file__)), 'data', "custom")
+        # data_dir = os.path.join( os.path.dirname(os.path.abspath(__file__)), 'data', "custom")
+        data_dir = os.path.join( os.path.dirname(os.path.abspath(__file__)),'projects','KidBright Micro AI_N5oTFBd', 'dataset')
         num_classes = len(CUSTOM_CLASSES)
         dataset = CustomDetection(root=data_dir, 
                                 labels=CUSTOM_CLASSES,
@@ -221,11 +223,9 @@ def train(args):
     # optimizer setup
     base_lr = args.lr
     tmp_lr = base_lr
-    optimizer = optim.SGD(model.parameters(), 
-                            lr=args.lr, 
-                            momentum=args.momentum,
-                            weight_decay=args.weight_decay
-                            )
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    #optimizer = optim.SGD(model.parameters(), lr=args.lr,  momentum=args.momentum, weight_decay=args.weight_decay)
+    
     max_epoch = args.epoch
     epoch_size = len(dataset) // args.batch_size
 

@@ -17,7 +17,7 @@ import tools
 
 from utils.augmentations import SSDAugmentation
 from utils.customapi_evaluator import CustomAPIEvaluator
-
+from utils.map_evaluator import MAPEvaluator
 
 # cards_id = [0, 1, 2, 3]
 
@@ -89,12 +89,12 @@ def train_object_detection(project, path_to_save, project_dir,q,
                             transform=SSDAugmentation(train_size, mean=(0.5, 0.5, 0.5), std=(128/255.0, 128/255.0, 128/255.0))
     )
 
-    evaluator = CustomAPIEvaluator(data_root=data_dir,
+    evaluator = MAPEvaluator(data_root=data_dir,
                                     img_size=val_size,
                                     device=device,
                                     transform=BaseTransform(val_size),
                                     labelmap=labels
-                                )
+                                )                                
 
     print('The dataset size:', len(dataset))
     q.announce({"time":time.time(), "event": "dataset_loading", "msg" : "The dataset size: " + str(len(dataset))})
@@ -134,21 +134,21 @@ def train_object_detection(project, path_to_save, project_dir,q,
     # optimizer setup
     base_lr = learning_rate
     tmp_lr = base_lr
-    optimizer = optim.SGD(model.parameters(), 
-                            lr=learning_rate, 
-                            momentum=momentum,
-                            weight_decay=weight_decay
-                        )
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer = optim.SGD(model.parameters(), lr=args.lr,  momentum=args.momentum, weight_decay=args.weight_decay)
+    #optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
+    
     max_epoch = epoch
     epoch_size = len(dataset) // batch_size
     best_map = 0.0
     # start training loop
     t0 = time.time()
-    epoch_train_loss = 0.0
+    
 
     q.announce({"time":time.time(), "event": "train_start", "msg" : "Start training ..."})
 
     for epoch in range(start_epoch, max_epoch):
+        epoch_train_loss = 0.0
         print('Training at epoch %d/%d' % (epoch + 1, max_epoch))
         # use step lr
         q.announce({
@@ -231,7 +231,7 @@ def train_object_detection(project, path_to_save, project_dir,q,
                 "msg" : "End batch " + str(iter_i) + "/" + str(epoch_size) + " ... training",
                 "batch": iter_i,
                 "max_batch": epoch_size,
-                "matrix": {
+                "matric": {
                     "train_loss": total_loss.item()
                 }
             })
@@ -285,10 +285,11 @@ def train_object_detection(project, path_to_save, project_dir,q,
             "time":time.time(), 
             "event": "epoch_end", 
             "msg" : "End epoch " + str(epoch + 1) + "/" + str(max_epoch) + " ... training",
-            "matrix": {
+            "epoch": epoch + 1,
+            "max_epoch": max_epoch,
+            "matric": {                
                 "train_loss": epoch_train_loss / epoch_size,
-                "val_acc": evaluator.map or 0.0,
-                "val_loss": evaluator.loss or 0.0,
+                "val_acc": evaluator.map or 0.0,                
                 "val_precision": evaluator.precision or 0.0,
                 "val_recall": evaluator.recall or 0.0,            
             }
