@@ -21,26 +21,20 @@ input_size = [416, 416]
 
 print('test on custom ...')
 CUSTOM_CLASSES = ['face']
-class_names = ['face']
-class_indexs = None
-CUSTOM_ROOT = "./projects/kbai_zWVWG75/dataset"
 num_classes = len(CUSTOM_CLASSES)
-dataset = CustomDetection(root=CUSTOM_ROOT,labels=CUSTOM_CLASSES, image_sets=['val'], transform=None)
 conf_thresh = 0.1
 nms_thresh = 0.5
-trained_model= "projects/kbai_zWVWG75/output/best_map.pth"
+trained_model= "out/best_map.pth"
 
 from models.slim_yolo_v2 import SlimYOLOv2 
 
-anchor_size = ANCHOR_SIZE
 net = SlimYOLOv2(device, 
   input_size=input_size, 
   num_classes=num_classes, 
   conf_thresh=conf_thresh, 
   nms_thresh=nms_thresh, 
-  anchor_size=anchor_size
+  anchor_size=ANCHOR_SIZE
 )
-
 
 net.load_state_dict(torch.load(trained_model, map_location=device))
 net.to(device).eval()
