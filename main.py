@@ -255,7 +255,7 @@ def training_task(project_id, q):
         res = train_object_detection(project, output_path, project_folder,q,
             high_resolution=True, 
             multi_scale=True, 
-            cuda=False, 
+            cuda=True, 
             learning_rate=project["trainConfig"]["learning_rate"], 
             batch_size=project["trainConfig"]["batch_size"],
             start_epoch=0, 
