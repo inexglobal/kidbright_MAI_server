@@ -59,6 +59,7 @@ STAGE = 0 #0 none, 1 = prepare dataset, 2 = training, 3 = trained, 4 = convertin
 
 reporter = MessageAnnouncer()
 train_task = None
+convert_task = None
 
 #==================================== Server Configuration ====================================#
 app = Flask(__name__)
@@ -103,21 +104,15 @@ def start_training():
 
 @app.route("/download", methods=["GET"])
 def download_file():
+    global train_task, reporter
     # convert project
     project_id = request.args.get("project_id")
-    project_path = os.path.join(PROJECT_PATH, project_id)
-    best_ap_file = os.path.join(project_path, "output", "best_map.pth")
-    if not os.path.exists(best_ap_file):
-        return jsonify({"result" : "FAIL", "reason":"No best_map.pth file"})
-    # convert pth to onnx
-    onnx_out = os.path.join(project_path, "output", "yolov2.onnx")
-    ncnn_out_param = os.path.join(project_path, "output", "yolov2.param")
-    ncnn_out_bin = os.path.join(project_path, "output", "yolov2.bin")
-    input_shape = (3, input_size[0], input_size[1])
-    with torch.no_grad():
-        torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
-        onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
-        print("convert end")
+    if not project_id:
+        return "Fail"
+    convert_task = threading.Thread(target=convert_task, args=(project_id,reporter,))
+    convert_task.start()
+    return jsonify({"result" : "OK"})
+    
 
 @app.route('/ping', methods=["GET","POST"])
 def on_ping():
@@ -134,6 +129,42 @@ def after_request(response):
 @app.route('/projects/<path:path>')
 def send_report(path):
     return send_from_directory('projects', path)
+
+def convert_task(project_id, q):
+    project_path = os.path.join(PROJECT_PATH, project_id)
+    best_ap_file = os.path.join(project_path, "output", "best_map.pth")
+    if not os.path.exists(best_ap_file):
+        return jsonify({"result" : "FAIL", "reason":"No best_map.pth file"})
+    # convert pth to onnx
+    onnx_out = os.path.join(project_path, "output", "model.onnx")
+    ncnn_out_param = os.path.join(project_path, "output", "model.param")
+    ncnn_out_bin = os.path.join(project_path, "output", "model.bin")
+    input_shape = (3, input_size[0], input_size[1])
+    with torch.no_grad():
+        torch_to_onnx(net.to("cpu"), input_shape, onnx_out, device="cpu")
+        onnx_to_ncnn(input_shape, onnx=onnx_out, ncnn_param=ncnn_out_param, ncnn_bin=ncnn_out_bin)
+        
+    # encode mode with spnntools
+
+    os.environ['PKG_CONFIG_PATH'] = ':/root/opencv-3.4.13/lib/pkgconfig'
+    os.environ['LD_LIBRARY_PATH'] += ':/root/opencv-3.4.13/lib'
+    os.environ['PATH'] += ':/root/opencv-3.4.13/bin'
+    output_model_optimize_bin_path = os.path.join(project_path, "output", "model_opt.bin")
+    output_model_optimize_param_path = os.path.join(project_path, "output", "model_opt.param")
+    cmd = f"tools/spnntools optimize {ncnn_out_param} {ncnn_out_bin} {output_model_optimize_param_path} {output_model_optimize_bin_path}"
+    os.system(cmd)
+    #spnntools calibrate -p=opt.param -b=opt.bin -i=/content/images -o=opt.table --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4
+    output_model_calibrate_table = os.path.join(project_path, "output", "model_opt.table")
+    test_images_path = os.path.join(project_path, "datasets", "JPEGImages")
+    cmd2 = f"tools/spnntools calibrate -p={output_model_optimize_param_path} -b={output_model_optimize_bin_path} -i={test_images_path} -o={output_model_calibrate_table} --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
+    os.system(cmd2)
+    # quantize model
+    # spnntools quantize opt.param opt.bin opt_int8.param opt_int8.bin opt.table
+    output_model_quantize_bin_path = os.path.join(project_path, "output", "model_int8.bin")
+    output_model_quantize_param_path = os.path.join(project_path, "output", "model_int8.param")
+    cmd3 = f"tools/spnntools quantize {output_model_optimize_param_path} {output_model_optimize_bin_path} {output_model_quantize_param_path} {output_model_quantize_bin_path} {output_model_calibrate_table}"
+    os.system(cmd3)
+    
 
 def training_task(project_id, q):
     global STAGE, current_model
