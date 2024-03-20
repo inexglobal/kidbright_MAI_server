@@ -21,6 +21,7 @@ import utils.helper as helper
 sys.path.append(".")
 #---- train ----#
 from train_object_detection import train_object_detection
+from train_image_classification import train_image_classification
 #---- converter ----#
 from convert import torch_to_onnx, onnx_to_ncnn, gen_input
 import torch
@@ -147,8 +148,16 @@ def convert_model(project_id, q):
 
     STAGE = 4
     project_path = os.path.join(PROJECT_PATH, project_id)
-    best_ap_file = os.path.join(project_path, "output", "best_map.pth")
-    if not os.path.exists(best_ap_file):
+    project = helper.read_json_file(os.path.join(project_path, PROJECT_FILENAME))
+    
+    best_file = None
+    
+    if project["trainConfig"]["modelType"] == "resnet18":
+        best_file = os.path.join(project_path, "output", "best_acc.pth")
+    elif project["trainConfig"]["modelType"] == "slim_yolo_v2":
+        best_file = os.path.join(project_path, "output", "best_map.pth")
+
+    if best == None or not os.path.exists(best_file):
         return q.announce({"time":time.time(), "event": "error", "msg" : "No best_map.pth file"})
     
     device = torch.device("cpu")
@@ -156,22 +165,30 @@ def convert_model(project_id, q):
     q.announce({"time":time.time(), "event": "convert_model_init", "msg" : "Start converting model"})
 
     #load project
-    project = helper.read_json_file(os.path.join(project_path, PROJECT_FILENAME))
     project_model = project["trainConfig"]["modelType"]
 
-    input_size = [416 , 416]
-    model_label = [ l["label"] for l in project["labels"]]
-    print("label:", model_label)
     if project_model == "slim_yolo_v2":
-        from models.slim_yolo_v2 import SlimYOLOv2
-        anchor_size = ANCHOR_SIZE
-        num_classes = len(model_label)
-        detect_threshold = float(project["trainConfig"]["objectThreshold"])
-        iou_threshold = float(project["trainConfig"]["iouThreshold"])
-        net = SlimYOLOv2(device, input_size=input_size, num_classes=num_classes, conf_thresh=detect_threshold, nms_thresh=iou_threshold, anchor_size=anchor_size)
-    
-    net.load_state_dict(torch.load(best_ap_file, map_location=device))
-    net.to(device).eval()
+        input_size = [416 , 416]
+        model_label = [ l["label"] for l in project["labels"]]
+        print("label:", model_label)
+        if project_model == "slim_yolo_v2":
+            from models.slim_yolo_v2 import SlimYOLOv2
+            anchor_size = ANCHOR_SIZE
+            num_classes = len(model_label)
+            detect_threshold = float(project["trainConfig"]["objectThreshold"])
+            iou_threshold = float(project["trainConfig"]["iouThreshold"])
+            net = SlimYOLOv2(device, input_size=input_size, num_classes=num_classes, conf_thresh=detect_threshold, nms_thresh=iou_threshold, anchor_size=anchor_size)
+        
+        net.load_state_dict(torch.load(best_file, map_location=device))
+        net.to(device).eval()
+    elif project_model == "resnet18":
+        input_size = [224, 224]
+        model_label = [ l["label"] for l in project["labels"]]
+        from torchvision import models
+        net = models.resnet18(pretrained=False, num_classes=len(model_label))
+        net.load_state_dict(torch.load(best_file, map_location=device))
+        net.to(device).eval()
+
     print('Finished loading model!')
 
     # convert to onnx and ncnn
@@ -252,25 +269,44 @@ def training_task(project_id, q):
         # 3 ========== training ========= #
         # label format in json lables : [ {label: "label1"}, {label: "label2"}]
         model_label = [l["label"] for l in project["labels"]]
-        res = train_object_detection(project, output_path, project_folder,q,
-            high_resolution=True, 
-            multi_scale=True, 
-            cuda=True, 
-            learning_rate=project["trainConfig"]["learning_rate"], 
-            batch_size=project["trainConfig"]["batch_size"],
-            start_epoch=0, 
-            epoch=project["trainConfig"]["epochs"],
-            train_split=project["trainConfig"]["train_split"],
-            model_type=project["trainConfig"]["modelType"],
-            model_weight=None,
-            validate_matrix=project["trainConfig"]["validateMatrix"],
-            save_method=project["trainConfig"]["saveMethod"],
-            step_lr=(150, 200),
-            labels=model_label,
-            momentum=0.9,
-            weight_decay=5e-4,
-            warm_up_epoch=6
-        )
+
+        if project["trainConfig"]["modelType"] == "slim_yolo_v2":
+            res = train_object_detection(project, output_path, project_folder,q,
+                high_resolution=True, 
+                multi_scale=True, 
+                cuda= True if torch.cuda.is_available() else False, 
+                learning_rate=project["trainConfig"]["learning_rate"], 
+                batch_size=project["trainConfig"]["batch_size"],
+                start_epoch=0, 
+                epoch=project["trainConfig"]["epochs"],
+                train_split=project["trainConfig"]["train_split"],
+                model_type=project["trainConfig"]["modelType"],
+                model_weight=None,
+                validate_matrix=project["trainConfig"]["validateMatrix"],
+                save_method=project["trainConfig"]["saveMethod"],
+                step_lr=(150, 200),
+                labels=model_label,
+                momentum=0.9,
+                weight_decay=5e-4,
+                warm_up_epoch=6
+            )
+        elif project["trainConfig"]["modelType"] == "resnet18":
+            train_image_classification(project, output_path, project_folder,q,
+                cuda= True if torch.cuda.is_available() else False, 
+                learning_rate=project["trainConfig"]["learning_rate"],  
+                batch_size=project["trainConfig"]["batch_size"],
+                start_epoch=0, 
+                epoch=project["trainConfig"]["epochs"],
+                train_split=project["trainConfig"]["train_split"], 
+                model_type='resnet18', 
+                model_weight=None,
+                validate_matrix='val_acc',
+                save_method='best',
+                step_lr=(150, 200),
+                labels=model_label,
+                weight_decay=5e-4,
+                warm_up_epoch=6
+            )
         if res:
             STAGE = 3
         # 4 ========== trained ========= #
