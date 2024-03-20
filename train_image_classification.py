@@ -123,6 +123,8 @@ def train_image_classification(project, path_to_save, project_dir,q,
         net = models.resnet101(pretrained=False, num_classes=num_classes)
     elif model_type == 'resnet152':
         net = models.resnet152(pretrained=False, num_classes=num_classes)
+    elif model_type == 'mobilenet_v2_75':
+        net = models.mobilenet_v2(pretrained=False, num_classes=num_classes, width_mult=0.75) # width_mult: 0.25, 0.5, 0.75, 1.0, 1.3, 1.4
     else:
         print('model type error')
         return False
