@@ -63,8 +63,13 @@ net.no_post_process = False
 cmd = "tools/spnntools optimize out/yolov2.param out/yolov2.bin out/opt.param out/opt.bin"
 os.system(cmd)
 
-cmd2 = "tools/spnntools calibrate -p=out/opt.param -b=out/opt.bin -i=./data/custom/test_images -o=out/opt.table --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
+cmd2 = "tools/spnntools calibrate -p=out/opt.param -b=out/opt.bin -i=./data/custom/test_images -o=out/opt.table --m=127.5,127.5,127.5 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
 os.system(cmd2)
 
 cmd3 = "tools/spnntools quantize out/opt.param out/opt.bin out/opt_int8.param out/opt_int8.bin out/opt.table"
 os.system(cmd3)
+
+
+#awnntools optimize model.param model.bin opt.param opt.bin 
+#awnntools calibrate -p="opt.param" -b="opt.bin" -i="/images" -m="127.5,127.5,127.5" -n="0.0078125, 0.0078125, 0.0078125" -o="opt.table" -s="224, 224"  -c -t=8 
+#awnntools quantize opt.param opt.bin model_awnn.param model_awnn.bin opt.table

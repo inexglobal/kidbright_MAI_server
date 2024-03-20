@@ -206,7 +206,7 @@ def convert_model(project_id, q):
     output_model_calibrate_table = os.path.join(project_path, "output", "model_opt.table")
     imgages_path = os.path.join(project_path, "dataset", "JPEGImages")
     q.announce({"time":time.time(), "event": "initial", "msg" : "Start calibrating model"})
-    cmd2 = "tools/spnntools calibrate -p="+output_model_optimize_param_path+" -b="+output_model_optimize_bin_path+" -i="+imgages_path+" -o="+output_model_calibrate_table+" --m=127.5,127.5.0,127.5.0 --n=1.0,1.0,1.0 --size=224,224 -c -t=4"
+    cmd2 = "tools/spnntools calibrate -p=\""+output_model_optimize_param_path+"\" -b=\""+output_model_optimize_bin_path+"\" -i=\""+imgages_path+"\" -o=\""+output_model_calibrate_table+"\" --m=\"127.5,127.5,127.5\" --n=\"0.0078125, 0.0078125, 0.0078125\" --size=\"224,224\" -c -t=4"
     os.system(cmd2)
 
     output_model_quantize_bin_path = os.path.join(project_path, "output", "model_int8.bin")
