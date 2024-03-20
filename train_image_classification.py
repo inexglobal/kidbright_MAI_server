@@ -91,9 +91,9 @@ def train_image_classification(project, path_to_save, project_dir,q,
         path = os.path.join(data_dir, label)
         data = load_data(path, i, input_shape)
         random.shuffle(data)
-        val_len = int(train_split / 100 * len(data))
-        trainset.extend(data[val_len:])
-        valset.extend(data[:val_len])
+        train_len = int(train_split / 100 * len(data))
+        trainset += data[:train_len]
+        valset += data[train_len:]
 
     random.shuffle(trainset)
     random.shuffle(valset)
@@ -136,12 +136,13 @@ def train_image_classification(project, path_to_save, project_dir,q,
     # loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    #optimizer = optim.SGD(net.parameters(), lr=learn_rate, momentum=0.9)
     #scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=step_lr, gamma=0.1)
 
     # train
     print("----------------------------------------------------------")
     print('Start training...')
-    q.announce({"time":time.time(), "event": "training", "msg" : "Start training..."})
+    q.announce({"time":time.time(), "event": "train_start", "msg" : "Start training ..."})
 
     best_acc = 0.0
     best_epoch = 0
@@ -166,7 +167,6 @@ def train_image_classification(project, path_to_save, project_dir,q,
             
         running_loss = 0.0
         net.train()
-
         for i, data in enumerate(trainloader, 0):
             inputs, labels = data
             inputs = inputs.to(device)
@@ -174,26 +174,29 @@ def train_image_classification(project, path_to_save, project_dir,q,
 
             optimizer.zero_grad()
 
-            outputs = net(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            with torch.set_grad_enabled(True):
+                outputs = net(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
 
             running_loss += loss.item()
 
         print('[%d] loss: %.5f' % (epoch, running_loss / len(trainloader)))
 
-        net.trainable = False
+        
         # eval
-        net.eval()
         correct = 0
         total = 0
+        net.eval()
+
         with torch.no_grad():
             for data in valloader:
                 images, labels = data
                 images = images.to(device)
                 labels = labels.to(device)
                 outputs = net(images)
+                
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
@@ -238,13 +241,8 @@ def train_image_classification(project, path_to_save, project_dir,q,
             }
         })
     print('Finished Training')
-    q.announce({"time":time.time(), "event": "training", "msg" : "Finished Training"})
-    print('Best val Acc: {:4f} at epoch {}'.format(best_acc, best_epoch))
-    q.announce({"time":time.time(), "event": "training", "msg" : 'Best val Acc: {:4f} at epoch {}'.format(best_acc, best_epoch)})
-    print('Save model params to', os.path.join(path_to_save, 'best_acc.pth'))
-    q.announce({"time":time.time(), "event": "training", "msg" : 'Save model params to ' + os.path.join(path_to_save, 'best_acc.pth')})
-    print('Training finished')
-
+    q.announce({"time":time.time(), "event": "train_end", "msg" : "Training is done"})
+    print('Training is done')
     return True
 
 if __name__ == "__main__":
