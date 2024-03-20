@@ -125,7 +125,7 @@ def train_image_classification(project, path_to_save, project_dir,q,
         net = models.resnet152(pretrained=False, num_classes=num_classes)
     else:
         print('model type error')
-        return
+        return False
 
     if model_weight:
         net.load_state_dict(torch.load(model_weight))
@@ -243,7 +243,9 @@ def train_image_classification(project, path_to_save, project_dir,q,
     q.announce({"time":time.time(), "event": "training", "msg" : 'Best val Acc: {:4f} at epoch {}'.format(best_acc, best_epoch)})
     print('Save model params to', os.path.join(path_to_save, 'best_acc.pth'))
     q.announce({"time":time.time(), "event": "training", "msg" : 'Save model params to ' + os.path.join(path_to_save, 'best_acc.pth')})
+    print('Training finished')
 
+    return True
 
 if __name__ == "__main__":
     import queue

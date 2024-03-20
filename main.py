@@ -290,8 +290,10 @@ def training_task(project_id, q):
                 weight_decay=5e-4,
                 warm_up_epoch=6
             )
+            if res:
+                STAGE = 3
         elif project["trainConfig"]["modelType"] == "resnet18":
-            train_image_classification(project, output_path, project_folder,q,
+            res = train_image_classification(project, output_path, project_folder,q,
                 cuda= True if torch.cuda.is_available() else False, 
                 learning_rate=project["trainConfig"]["learning_rate"],  
                 batch_size=project["trainConfig"]["batch_size"],
@@ -307,8 +309,8 @@ def training_task(project_id, q):
                 weight_decay=5e-4,
                 warm_up_epoch=6
             )
-        if res:
-            STAGE = 3
+            if res:
+                STAGE = 3
         # 4 ========== trained ========= #
         
     finally:
