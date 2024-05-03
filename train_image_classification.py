@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import models
+from torchvision import models, datasets, transforms
 # import resnet as models
 import numpy as np
 import cv2
@@ -12,34 +12,6 @@ import torch.optim as optim
 import time
 import torch.backends.cudnn as cudnn
 
-
-def load_data(path, class_id, shape):
-    data = []
-    exts = [".jpg", ".jpeg", ".png"]
-    files = os.listdir(path)
-    for name in files:
-        if not os.path.splitext(name.lower())[1] in exts:
-            continue
-        img = cv2.imread(os.path.join(path, name))
-        if type(img) == type(None):
-            print("read file {} fail".format(os.path.join(path, name)))
-            continue
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (shape[2], shape[1]))
-        img = np.transpose(img, (2, 0, 1)).astype(np.float32) # hwc to chw layout
-        img = (img - 127.5) * 0.0078125
-        data.append((torch.from_numpy(img), class_id))
-    return data
-    
-class Dataset:
-    def __init__(self, data):
-        self.data = data
-
-    def __getitem__(self, i):
-        return self.data[i]
-
-    def __len__(self) -> int:
-        return len(self.data)
 
 def train_image_classification(project, path_to_save, project_dir,q,
         cuda=True, 
@@ -83,51 +55,78 @@ def train_image_classification(project, path_to_save, project_dir,q,
     print('The number of classes:', num_classes)
     q.announce({"time":time.time(), "event": "dataset_loading", "msg" : "The number of classes: " + str(num_classes)})
 
+    # split the dataset to train and val
+    # create train and valid folder
+    if not os.path.exists(os.path.join(data_dir, 'train')):
+        os.makedirs(os.path.join(data_dir, 'train'))
+    if not os.path.exists(os.path.join(data_dir, 'valid')):
+        os.makedirs(os.path.join(data_dir, 'valid'))
 
-    trainset = []
-    valset = []
+    for label in labels:
+        if not os.path.exists(os.path.join(data_dir, 'train', label)):
+            os.makedirs(os.path.join(data_dir, 'train', label))
+        if not os.path.exists(os.path.join(data_dir, 'valid', label)):
+            os.makedirs(os.path.join(data_dir, 'valid', label))
 
-    for i, label in enumerate(labels):
-        path = os.path.join(data_dir, label)
-        data = load_data(path, i, input_shape)
-        random.shuffle(data)
-        train_len = int(train_split / 100 * len(data))
-        trainset += data[:train_len]
-        valset += data[train_len:]
+    for label in labels:
+        images = os.listdir(os.path.join(data_dir, label))
+        random.shuffle(images)
+        train_images = images[:int(len(images) * train_split / 100)]
+        val_images = images[int(len(images) * train_split / 100):]
 
-    random.shuffle(trainset)
-    random.shuffle(valset)
+        for image in train_images:
+            os.rename(os.path.join(data_dir, label, image), os.path.join(data_dir, 'train', label, image))
+        for image in val_images:
+            os.rename(os.path.join(data_dir, label, image), os.path.join(data_dir, 'valid', label, image))
 
-    trainset = Dataset(trainset)
-    valset = Dataset(valset)
-    print("trainset len:{}, valset len:{}".format(len(trainset), len(valset)))
+    #remove empty folder
+    for label in labels:
+        if len(os.listdir(os.path.join(data_dir, label))) == 0:
+            os.rmdir(os.path.join(data_dir, label))
+            
+    train_transforms = transforms.Compose([
+        transforms.Resize(input_shape[1:]),
+        transforms.RandomRotation(30),
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    test_transforms = transforms.Compose([
+        transforms.Resize(input_shape[1:]),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
 
+    trainset = datasets.ImageFolder(os.path.join(data_dir, 'train'), transform=train_transforms)
+    valset = datasets.ImageFolder(os.path.join(data_dir, 'valid'), transform=test_transforms)
 
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                          shuffle=True)
-    valloader = torch.utils.data.DataLoader(valset, batch_size=batch_size,
-                                         shuffle=False)
-
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True)
+    valloader = torch.utils.data.DataLoader(valset, batch_size=batch_size, shuffle=False)
+    
     # model
     print("----------------------------------------------------------")
     print('Building the model...')
     q.announce({"time":time.time(), "event": "model_building", "msg" : "Building the model..."})
 
-    if model_type == 'resnet18':
-        net = models.resnet18(pretrained=False, num_classes=num_classes)
-    elif model_type == 'resnet34':
-        net = models.resnet34(pretrained=False, num_classes=num_classes)
-    elif model_type == 'resnet50':
-        net = models.resnet50(pretrained=False, num_classes=num_classes)
-    elif model_type == 'resnet101':
-        net = models.resnet101(pretrained=False, num_classes=num_classes)
-    elif model_type == 'resnet152':
-        net = models.resnet152(pretrained=False, num_classes=num_classes)
-    elif model_type == 'mobilenet_v2_75':
-        net = models.mobilenet_v2(pretrained=False, num_classes=num_classes, width_mult=0.75) # width_mult: 0.25, 0.5, 0.75, 1.0, 1.3, 1.4
-    else:
-        print('model type error')
-        return False
+    # if model_type == 'resnet18':
+    #     net = models.resnet18(pretrained=True, num_classes=num_classes)
+    # elif model_type == 'resnet34':
+    #     net = models.resnet34(pretrained=True, num_classes=num_classes)
+    # elif model_type == 'resnet50':
+    #     net = models.resnet50(pretrained=True, num_classes=num_classes)
+    # elif model_type == 'resnet101':
+    #     net = models.resnet101(pretrained=True, num_classes=num_classes)
+    # elif model_type == 'resnet152':
+    #     net = models.resnet152(pretrained=True, num_classes=num_classes)
+    # elif model_type == 'mobilenet_v2_75':
+    #     net = models.mobilenet_v2(pretrained=True, num_classes=num_classes, width_mult=0.75) # width_mult: 0.25, 0.5, 0.75, 1.0, 1.3, 1.4
+    # else:
+    #     print('model type error')
+    #     return False
+    
+    net = models.mobilenet_v2(pretrained=True)
 
     if model_weight:
         net.load_state_dict(torch.load(model_weight))
