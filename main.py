@@ -152,7 +152,7 @@ def convert_model(project_id, q):
     
     best_file = None
     
-    if project["trainConfig"]["modelType"] == "resnet18":
+    if project["trainConfig"]["modelType"].startswith("mobilenet"):
         best_file = os.path.join(project_path, "output", "best_acc.pth")
     elif project["trainConfig"]["modelType"] == "slim_yolo_v2":
         best_file = os.path.join(project_path, "output", "best_map.pth")
@@ -181,6 +181,14 @@ def convert_model(project_id, q):
         
         net.load_state_dict(torch.load(best_file, map_location=device))
         net.to(device).eval()
+    elif project_model.startswith("mobilenet"):
+        input_size = [224, 224]
+        model_label = [ l["label"] for l in project["labels"]]
+        from torchvision.models import mobilenet_v2
+        net = mobilenet_v2(pretrained=False)
+        net.load_state_dict(torch.load(best_file, map_location=device))
+        net.to(device).eval()
+
     elif project_model == "resnet18":
         input_size = [224, 224]
         model_label = [ l["label"] for l in project["labels"]]
