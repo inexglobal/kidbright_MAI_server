@@ -20,7 +20,7 @@ def train_image_classification(project, path_to_save, project_dir,q,
         start_epoch=0, 
         epoch=100,
         train_split=80, 
-        model_type='resnet18', 
+        model_type='mobilenet-75', 
         model_weight=None,
         validate_matrix='val_acc',
         save_method='best',
@@ -85,7 +85,7 @@ def train_image_classification(project, path_to_save, project_dir,q,
             os.rmdir(os.path.join(data_dir, label))
             
     train_transforms = transforms.Compose([
-        transforms.Resize(input_shape[1:]),
+        transforms.Resize(255),
         transforms.RandomRotation(30),
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
@@ -93,7 +93,7 @@ def train_image_classification(project, path_to_save, project_dir,q,
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
     test_transforms = transforms.Compose([
-        transforms.Resize(input_shape[1:]),
+        transforms.Resize(255),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -125,9 +125,21 @@ def train_image_classification(project, path_to_save, project_dir,q,
     # else:
     #     print('model type error')
     #     return False
-    
-    net = models.mobilenet_v2(pretrained=True)
-
+    print('model type:', model_type)
+    if model_type == 'mobilenet-100':
+        net = models.mobilenet_v2(pretrained=True, width_mult=1.0)
+    elif model_type == 'mobilenet-75':
+        net = models.mobilenet_v2(pretrained=True, width_mult=0.75)
+    elif model_type == 'mobilenet-50':
+        net = models.mobilenet_v2(pretrained=True, width_mult=0.5)
+    elif model_type == 'mobilenet-25':
+        net = models.mobilenet_v2(pretrained=True, width_mult=0.25)
+    elif model_type == 'mobilenet-10':
+        net = models.mobilenet_v2(pretrained=True, width_mult=0.1)
+    else:
+        print('model type error')
+        return False
+        
     if model_weight:
         net.load_state_dict(torch.load(model_weight))
 

@@ -292,7 +292,8 @@ def training_task(project_id, q):
             )
             if res:
                 STAGE = 3
-        elif project["trainConfig"]["modelType"] == "resnet18":
+        #check if start with mobile net
+        elif project["trainConfig"]["modelType"].startswith("mobilenet"):
             res = train_image_classification(project, output_path, project_folder,q,
                 cuda= True if torch.cuda.is_available() else False, 
                 learning_rate=project["trainConfig"]["learning_rate"],  
@@ -300,7 +301,7 @@ def training_task(project_id, q):
                 start_epoch=0, 
                 epoch=project["trainConfig"]["epochs"],
                 train_split=project["trainConfig"]["train_split"], 
-                model_type='resnet18', 
+                model_type=project["trainConfig"]["modelType"], 
                 model_weight=None,
                 validate_matrix='val_acc',
                 save_method='best',
@@ -312,7 +313,9 @@ def training_task(project_id, q):
             if res:
                 STAGE = 3
         # 4 ========== trained ========= #
-        
+    except Exception as e:
+        print("Error : ", str(e))
+        q.announce({"time":time.time(), "event": "error", "msg" : str(e)})        
     finally:
         print("Thread ended")
 
