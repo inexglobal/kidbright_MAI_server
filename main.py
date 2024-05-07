@@ -152,8 +152,9 @@ def convert_model(project_id, q):
     
     best_file = None
     
-    if project["trainConfig"]["modelType"].startswith("mobilenet"):
+    if project["trainConfig"]["modelType"].startswith("mobilenet") or project["trainConfig"]["modelType"] == "resnet18":
         best_file = os.path.join(project_path, "output", "best_acc.pth")
+
     elif project["trainConfig"]["modelType"] == "slim_yolo_v2":
         best_file = os.path.join(project_path, "output", "best_map.pth")
 
@@ -166,26 +167,27 @@ def convert_model(project_id, q):
 
     #load project
     project_model = project["trainConfig"]["modelType"]
-
+    model_label = [l["label"] for l in project["labels"]]
+    num_classes = len(model_label)
     if project_model == "slim_yolo_v2":
-        input_size = [416 , 416]
-        model_label = [ l["label"] for l in project["labels"]]
+        input_size = [416 , 416]        
         print("label:", model_label)
         if project_model == "slim_yolo_v2":
             from models.slim_yolo_v2 import SlimYOLOv2
-            anchor_size = ANCHOR_SIZE
-            num_classes = len(model_label)
+            anchor_size = ANCHOR_SIZE            
             detect_threshold = float(project["trainConfig"]["objectThreshold"])
             iou_threshold = float(project["trainConfig"]["iouThreshold"])
             net = SlimYOLOv2(device, input_size=input_size, num_classes=num_classes, conf_thresh=detect_threshold, nms_thresh=iou_threshold, anchor_size=anchor_size)
         
         net.load_state_dict(torch.load(best_file, map_location=device))
         net.to(device).eval()
+
     elif project_model.startswith("mobilenet"):
         input_size = [224, 224]
         model_label = [ l["label"] for l in project["labels"]]
         from torchvision.models import mobilenet_v2
         net = mobilenet_v2(pretrained=False)
+        net.classifier[1] = nn.Linear(net.classifier[1].in_features, num_classes)        
         net.load_state_dict(torch.load(best_file, map_location=device))
         net.to(device).eval()
 
@@ -193,7 +195,8 @@ def convert_model(project_id, q):
         input_size = [224, 224]
         model_label = [ l["label"] for l in project["labels"]]
         from torchvision import models
-        net = models.resnet18(pretrained=False, num_classes=len(model_label))
+        net = models.resnet18(pretrained=False)
+        net.fc = nn.Linear(net.fc.in_features , num_classes)
         net.load_state_dict(torch.load(best_file, map_location=device))
         net.to(device).eval()
 
@@ -300,6 +303,27 @@ def training_task(project_id, q):
             )
             if res:
                 STAGE = 3
+        #check if start with resnet18
+        elif project["trainConfig"]["modelType"].startswith("resnet"):
+            res = train_image_classification(project, output_path, project_folder,q,
+                cuda= True if torch.cuda.is_available() else False, 
+                learning_rate=project["trainConfig"]["learning_rate"],  
+                batch_size=project["trainConfig"]["batch_size"],
+                start_epoch=0, 
+                epoch=project["trainConfig"]["epochs"],
+                train_split=project["trainConfig"]["train_split"], 
+                model_type=project["trainConfig"]["modelType"], 
+                model_weight=None,
+                validate_matrix='val_acc',
+                save_method=project["trainConfig"]["saveMethod"],
+                step_lr=(150, 200),
+                labels=model_label,
+                weight_decay=5e-4,
+                warm_up_epoch=6
+            )
+            if res:
+                STAGE = 3
+
         #check if start with mobile net
         elif project["trainConfig"]["modelType"].startswith("mobilenet"):
             res = train_image_classification(project, output_path, project_folder,q,
@@ -312,7 +336,7 @@ def training_task(project_id, q):
                 model_type=project["trainConfig"]["modelType"], 
                 model_weight=None,
                 validate_matrix='val_acc',
-                save_method='best',
+                save_method=project["trainConfig"]["saveMethod"],
                 step_lr=(150, 200),
                 labels=model_label,
                 weight_decay=5e-4,

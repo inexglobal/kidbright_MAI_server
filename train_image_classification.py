@@ -110,21 +110,6 @@ def train_image_classification(project, path_to_save, project_dir,q,
     print('Building the model...')
     q.announce({"time":time.time(), "event": "model_building", "msg" : "Building the model..."})
 
-    # if model_type == 'resnet18':
-    #     net = models.resnet18(pretrained=True, num_classes=num_classes)
-    # elif model_type == 'resnet34':
-    #     net = models.resnet34(pretrained=True, num_classes=num_classes)
-    # elif model_type == 'resnet50':
-    #     net = models.resnet50(pretrained=True, num_classes=num_classes)
-    # elif model_type == 'resnet101':
-    #     net = models.resnet101(pretrained=True, num_classes=num_classes)
-    # elif model_type == 'resnet152':
-    #     net = models.resnet152(pretrained=True, num_classes=num_classes)
-    # elif model_type == 'mobilenet_v2_75':
-    #     net = models.mobilenet_v2(pretrained=True, num_classes=num_classes, width_mult=0.75) # width_mult: 0.25, 0.5, 0.75, 1.0, 1.3, 1.4
-    # else:
-    #     print('model type error')
-    #     return False
     print('model type:', model_type)
     if model_type == 'mobilenet-100':
         net = models.mobilenet_v2(pretrained=True, width_mult=1.0)
@@ -136,10 +121,29 @@ def train_image_classification(project, path_to_save, project_dir,q,
         net = models.mobilenet_v2(pretrained=True, width_mult=0.25)
     elif model_type == 'mobilenet-10':
         net = models.mobilenet_v2(pretrained=True, width_mult=0.1)
+    elif model_type == 'resnet18':
+        net = models.resnet18(pretrained=True)
+    elif model_type == 'resnet34':
+        net = models.resnet34(pretrained=True)
+    elif model_type == 'resnet50':
+        net = models.resnet50(pretrained=True)
+    elif model_type == 'resnet101':
+        net = models.resnet101(pretrained=True)
+    elif model_type == 'resnet152':
+        net = models.resnet152(pretrained=True)        
     else:
         print('model type error')
         return False
-        
+
+    # add fc layer
+    if model_type.startswith('mobilenet'):
+        net.classifier[1] = nn.Linear(in_features=model.classifier[1].in_features, out_features=num_classes, bias=True)
+    elif model_type.startswith('resnet'):
+        net.fc = nn.Linear(in_features=net.fc.in_features, out_features=num_classes, bias=True)
+    else:
+        print('model type error')
+        return False
+
     if model_weight:
         net.load_state_dict(torch.load(model_weight))
 
