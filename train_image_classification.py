@@ -47,7 +47,7 @@ def train_image_classification(project, path_to_save, project_dir,q,
     print('Loading the dataset...')
     q.announce({"time":time.time(), "event": "dataset_loading", "msg" : "Loading the dataset..."})
 
-    data_dir = os.path.join(project_dir, "dataset/train")
+    data_dir = os.path.join(project_dir, "dataset")
     num_classes = len(labels)
 
     print('Project label:', labels)
