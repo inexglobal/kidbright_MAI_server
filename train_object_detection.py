@@ -139,7 +139,7 @@ def train_object_detection(project, path_to_save, project_dir,q,
     #optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
     
     max_epoch = epoch
-    epoch_size = len(dataset) // batch_size
+    epoch_size = len(dataset) // batch_size +1
     best_map = 0.0
     # start training loop
     t0 = time.time()
